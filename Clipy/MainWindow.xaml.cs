@@ -6,6 +6,7 @@ using Clipy.Models;
 using Clipy.Services;
 using Clipy.Themes;
 using H.NotifyIcon;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -32,6 +33,7 @@ public sealed partial class MainWindow : Window
     private readonly ChatHistoryService _chatHistory = new();
     private readonly SpeechInputService _speech = new();
     private readonly TaskbarIcon _tray = new() { ToolTipText = "Clipy" };
+    private System.Drawing.Icon? _trayIcon;
     private readonly HotkeyService _hotkey = new();
     private readonly List<AttachmentItem> _attachments = new();
     private NativeOrbWindow? _orb;
@@ -96,6 +98,8 @@ public sealed partial class MainWindow : Window
             _hotkey.Dispose();
             _orb?.Dispose();
             _orb = null;
+            _trayIcon?.Dispose();
+            _trayIcon = null;
         };
 
         try
@@ -132,6 +136,7 @@ public sealed partial class MainWindow : Window
             RefreshFrameDecor();
             RefreshThemeCards();
             UpdateScreenLayout();
+            RefreshTrayIcon();
         });
     }
 
@@ -832,65 +837,89 @@ public sealed partial class MainWindow : Window
         var gotAnswer = false;
         var thinkingLen = 0;
         var answerMarkdown = "";
+        var thinkingBuilder = new System.Text.StringBuilder();
+        var ui = new UiCoalescer(DispatcherQueue);
+        var textBrush = new SolidColorBrush(_themes.Current.Text);
+        var mutedBrush = new SolidColorBrush(_themes.Current.Muted);
+        var accentBrush = new SolidColorBrush(_themes.Current.Accent);
+        var cardBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+        var errorBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x8A, 0x8A));
 
-        void Ui(Action action) => DispatcherQueue.TryEnqueue(() =>
+        void ScrollChat()
         {
-            action();
             ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight + 80, null);
-        });
+        }
 
         void RenderAnswer(string markdown, bool error = false)
         {
-            var fg = new SolidColorBrush(error
-                ? Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x8A, 0x8A)
-                : _themes.Current.Text);
-            var muted = new SolidColorBrush(_themes.Current.Muted);
-            var accent = new SolidColorBrush(_themes.Current.Accent);
-            var card = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+            turn.StreamPreview.Visibility = Visibility.Collapsed;
+            turn.AnswerHost.Visibility = Visibility.Visible;
+            var fg = error ? errorBrush : textBrush;
             turn.AnswerHost.Children.Clear();
-            MarkdownRenderer.Populate(turn.AnswerHost, markdown, fg, muted, accent, card);
+            MarkdownRenderer.Populate(turn.AnswerHost, markdown, fg, mutedBrush, accentBrush, cardBrush);
             turn.AnswerMarkdown = markdown;
             turn.CopyBtn.Visibility = string.IsNullOrWhiteSpace(markdown)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
+            ScrollChat();
+        }
+
+        void UpdateStreamPreview()
+        {
+            if (_userCancelledRun) return;
+            turn.AnswerHost.Visibility = Visibility.Collapsed;
+            turn.StreamPreview.Visibility = Visibility.Visible;
+            turn.StreamPreview.Text = answerMarkdown.Length > 16000
+                ? "…\n" + answerMarkdown[^16000..]
+                : answerMarkdown;
+            ScrollChat();
         }
 
         try
         {
         await _agent.RunPromptAsync(
             string.IsNullOrEmpty(text) ? "Analyze the attached context." : text,
-            s => Ui(() =>
+            s => ui.Enqueue(() =>
             {
                 FooterStatus.Text = s;
                 if (!gotAnswer)
                     turn.Status.Text = s;
             }),
-            chunk => Ui(() =>
+            chunk =>
             {
-                thinkingLen += chunk.Length;
-                turn.Thinking.Visibility = Visibility.Visible;
                 if (thinkingLen < 900)
-                    turn.Thinking.Text += chunk;
-                else if (!turn.Thinking.Text.EndsWith("…", StringComparison.Ordinal))
-                    turn.Thinking.Text += "…";
-                if (!gotAnswer)
-                    turn.Status.Text = "Думаю…";
-            }),
-            chunk => Ui(() =>
-            {
-                if (!gotAnswer)
                 {
-                    gotAnswer = true;
-                    turn.Status.Visibility = Visibility.Collapsed;
-                    if (turn.Thinking.Visibility == Visibility.Visible)
-                        turn.Thinking.Opacity = 0.55;
+                    thinkingLen += chunk.Length;
+                    thinkingBuilder.Append(chunk);
                 }
+                ui.Enqueue(() =>
+                {
+                    turn.Thinking.Visibility = Visibility.Visible;
+                    turn.Thinking.Text = thinkingLen < 900
+                        ? thinkingBuilder.ToString()
+                        : thinkingBuilder.ToString()[..Math.Min(900, thinkingBuilder.Length)] + "…";
+                    if (!gotAnswer)
+                        turn.Status.Text = "Думаю…";
+                });
+            },
+            chunk =>
+            {
                 answerMarkdown += chunk;
-                RenderAnswer(answerMarkdown);
-            }),
+                ui.Enqueue(() =>
+                {
+                    if (!gotAnswer)
+                    {
+                        gotAnswer = true;
+                        turn.Status.Visibility = Visibility.Collapsed;
+                        if (turn.Thinking.Visibility == Visibility.Visible)
+                            turn.Thinking.Opacity = 0.55;
+                    }
+                    UpdateStreamPreview();
+                });
+            },
             (final, code) =>
             {
-                Ui(() =>
+                ui.EnqueueHigh(() =>
                 {
                     SetBusy(false);
                     turn.Status.Visibility = Visibility.Collapsed;
@@ -937,7 +966,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Ui(() =>
+            ui.EnqueueHigh(() =>
             {
                 SetBusy(false);
                 FooterStatus.Text = ex.Message;
@@ -950,6 +979,7 @@ public sealed partial class MainWindow : Window
     {
         public required TextBlock Status { get; init; }
         public required TextBlock Thinking { get; init; }
+        public required TextBlock StreamPreview { get; init; }
         public required StackPanel AnswerHost { get; init; }
         public required Button CopyBtn { get; init; }
         public string AnswerMarkdown { get; set; } = "";
@@ -1010,11 +1040,19 @@ public sealed partial class MainWindow : Window
             Foreground = new SolidColorBrush(accent),
             BorderThickness = new Thickness(0),
         };
-        var answerHost = new StackPanel { Spacing = 4 };
+        var streamPreview = new TextBlock
+        {
+            Text = "⏳ Чекаю відповідь агента…",
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+            Foreground = new SolidColorBrush(_themes.Current.Muted),
+        };
+        var answerHost = new StackPanel { Spacing = 4, Visibility = Visibility.Collapsed };
         var turnRef = new AssistantTurn
         {
             Status = status,
             Thinking = thinking,
+            StreamPreview = streamPreview,
             AnswerHost = answerHost,
             CopyBtn = copyBtn,
         };
@@ -1027,17 +1065,11 @@ public sealed partial class MainWindow : Window
             FooterStatus.Text = "Скопійовано";
         };
 
-        answerHost.Children.Add(new TextBlock
-        {
-            Text = "⏳ Чекаю відповідь агента…",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(_themes.Current.Muted),
-        });
-
         toolbar.Children.Add(copyBtn);
         body.Children.Add(status);
         body.Children.Add(thinking);
         body.Children.Add(toolbar);
+        body.Children.Add(streamPreview);
         body.Children.Add(answerHost);
         border.Child = body;
         stack.Children.Add(border);
@@ -1067,6 +1099,7 @@ public sealed partial class MainWindow : Window
         {
             Text = text,
             TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
             Foreground = new SolidColorBrush(_themes.Current.Text),
         };
         border.Child = tb;
@@ -1109,9 +1142,10 @@ public sealed partial class MainWindow : Window
 
     private void CancelRun()
     {
+        if (!_busy) return;
         _userCancelledRun = true;
-        _runCts?.Cancel();
         _agent.Cancel();
+        _runCts?.Cancel();
         SetBusy(false);
         SetMascotState(MascotState.Idle);
         FooterStatus.Text = "Скасовано";
@@ -1315,6 +1349,8 @@ public sealed partial class MainWindow : Window
             {
                 var turn = AddAssistantTurn();
                 turn.Status.Visibility = Visibility.Collapsed;
+                turn.StreamPreview.Visibility = Visibility.Collapsed;
+                turn.AnswerHost.Visibility = Visibility.Visible;
                 var fg = new SolidColorBrush(_themes.Current.Text);
                 var muted = new SolidColorBrush(_themes.Current.Muted);
                 var accent = new SolidColorBrush(_themes.Current.Accent);
@@ -1493,6 +1529,7 @@ public sealed partial class MainWindow : Window
 
     private void SetupTray()
     {
+        RefreshTrayIcon();
         var menu = new MenuFlyout();
         _tray.ContextFlyout = menu;
         var show = new MenuFlyoutItem { Text = "Показати (Ctrl+Shift+C)" };
@@ -1527,6 +1564,8 @@ public sealed partial class MainWindow : Window
             _hotkey.Dispose();
             _orb?.Dispose();
             _orb = null;
+            _trayIcon?.Dispose();
+            _trayIcon = null;
             Application.Current.Exit();
         };
         menu.Items.Add(show);
@@ -1536,6 +1575,13 @@ public sealed partial class MainWindow : Window
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(quit);
         _tray.ForceCreate();
+    }
+
+    private void RefreshTrayIcon()
+    {
+        _trayIcon?.Dispose();
+        _trayIcon = TrayIconHelper.Create(_themes.CurrentRenderer);
+        _tray.Icon = _trayIcon;
     }
 
     private void Save()

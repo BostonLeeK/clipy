@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -match '^v(.+)$') {
+            $version = $Matches[1]
+          } else {
+            $version = (Get-Content version.txt -Raw).Trim()
+          }
+          "value=$version" >> $env:GITHUB_OUTPUT
+          Set-Content -Path version.txt -Value $version -NoNewline
+
+      - name: Publish app
+        shell: pwsh
+        run: |
+          dotnet publish Clipy/Clipy.csproj -c Release -r win-x64 --self-contained true -o publish
+
+      - name: Build portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $version = "${{ steps.version.outputs.value }}"
+          $staging = "$env:RUNNER_TEMP\clipy-portable"
+          if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item -Path publish/* -Destination $staging -Recurse -Force
+          Compress-Archive -Path "$staging/*" -DestinationPath "dist/Clipy-$version-win-x64-portable.zip" -CompressionLevel Optimal
+
+      - name: Generate installer icon
+        shell: pwsh
+        run: |
+          $iconPath = "installer/clipy.ico"
+          if (-not (Test-Path $iconPath)) {
+            Add-Type -AssemblyName System.Drawing
+            $size = 256
+            $bmp = New-Object System.Drawing.Bitmap $size, $size
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+            $g.Clear([System.Drawing.Color]::FromArgb(0, 0, 0, 0))
+            $rect = New-Object System.Drawing.Rectangle 20, 20, 216, 216
+            $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
+              $rect,
+              [System.Drawing.Color]::FromArgb(255, 200, 255, 77),
+              [System.Drawing.Color]::FromArgb(255, 139, 124, 246),
+              45)
+            $g.FillEllipse($brush, $rect)
+            $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+            $stream = [System.IO.File]::Create($iconPath)
+            $icon.Save($stream)
+            $stream.Close()
+          }
+
+      - name: Build installer
+        uses: amake/innosetup-compiler-action@v1.0.0
+        with:
+          path: installer/Clipy.iss
+          options: /DAppVersion=${{ steps.version.outputs.value }} /DPublishDir=${{ github.workspace }}/publish /DOutputDir=${{ github.workspace }}/dist /DSourcePath=${{ github.workspace }}/installer /DIconFile=clipy.ico
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clipy-${{ steps.version.outputs.value }}-win-x64
+          path: |
+            dist/Clipy-Setup-${{ steps.version.outputs.value }}-x64.exe
+            dist/Clipy-${{ steps.version.outputs.value }}-win-x64-portable.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Clipy-Setup-${{ steps.version.outputs.value }}-x64.exe
+            dist/Clipy-${{ steps.version.outputs.value }}-win-x64-portable.zip
+          generate_release_notes: true

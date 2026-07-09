@@ -353,6 +353,17 @@ public sealed class AgentService
             args.Add(_config.ModelId.Trim());
         }
 
+        if (string.Equals(_config.AgentMode, "ask", StringComparison.OrdinalIgnoreCase))
+        {
+            args.Add("--mode");
+            args.Add("ask");
+        }
+        else if (string.Equals(_config.AgentMode, "plan", StringComparison.OrdinalIgnoreCase))
+        {
+            args.Add("--mode");
+            args.Add("plan");
+        }
+
         foreach (var dir in attachments
             .Select(p => Path.GetDirectoryName(p))
             .Where(d => !string.IsNullOrEmpty(d))
@@ -530,6 +541,16 @@ public sealed class AgentService
                         var name = string.IsNullOrEmpty(path) ? "файл" : Path.GetFileName(path);
                         return new StreamEvent(null, lastFull, null, $"Читаю {name}…");
                     }
+                    if (tool.TryGetProperty("writeToolCall", out var write)
+                        && write.TryGetProperty("args", out var wargs)
+                        && wargs.TryGetProperty("path", out var wpath))
+                    {
+                        var path = wpath.GetString();
+                        var name = string.IsNullOrEmpty(path) ? "файл" : Path.GetFileName(path);
+                        return new StreamEvent(null, lastFull, null, $"Пишу {name}…");
+                    }
+                    if (tool.TryGetProperty("shellToolCall", out _))
+                        return new StreamEvent(null, lastFull, null, "Виконую команду…");
                     return new StreamEvent(null, lastFull, null, "Працюю з інструментами…");
                 }
             }
@@ -538,7 +559,9 @@ public sealed class AgentService
             {
                 var d = root.TryGetProperty("delta", out var de) ? de.GetString()
                     : root.TryGetProperty("text", out var te) ? te.GetString() : "";
-                return new StreamEvent(d, lastFull + d, null, "Пишу відповідь…");
+                if (string.IsNullOrEmpty(d))
+                    return new StreamEvent(null, lastFull, null, null);
+                return MergeAnswerText(lastFull, d, incomingIsFull: false);
             }
 
             if (type == "assistant" && root.TryGetProperty("message", out var msg)
@@ -554,31 +577,49 @@ public sealed class AgentService
                 if (string.IsNullOrEmpty(piece))
                     return new StreamEvent(null, lastFull, null, null);
 
-                var isFlush = root.TryGetProperty("model_call_id", out _);
-                var isPartial = root.TryGetProperty("timestamp_ms", out _) && !isFlush;
-
-                if (isPartial)
-                    return new StreamEvent(piece, lastFull + piece, null, "Пишу відповідь…");
-
-                if (isFlush)
-                {
-                    if (string.IsNullOrEmpty(lastFull))
-                        return new StreamEvent(piece, piece, null, "Пишу відповідь…");
-                    if (piece.StartsWith(lastFull, StringComparison.Ordinal) && piece.Length > lastFull.Length)
-                        return new StreamEvent(piece[lastFull.Length..], piece, null, "Пишу відповідь…");
-                    return new StreamEvent(null, lastFull, null, null);
-                }
-
-                if (piece.StartsWith(lastFull, StringComparison.Ordinal))
-                    return new StreamEvent(piece[lastFull.Length..], piece, null, "Пишу відповідь…");
-                return new StreamEvent(piece, piece, null, "Пишу відповідь…");
+                return MergeAnswerText(lastFull, piece, incomingIsFull: true, status: "Пишу відповідь…");
             }
         }
         catch (JsonException)
         {
             if (!line.StartsWith('{'))
-                return new StreamEvent(line, lastFull + line, null, null);
+            {
+                var merged = MergeAnswerText(lastFull, line, incomingIsFull: false);
+                return merged;
+            }
         }
         return new StreamEvent(null, lastFull, null, null);
+    }
+
+    private static StreamEvent MergeAnswerText(
+        string lastFull,
+        string incoming,
+        bool incomingIsFull,
+        string? status = null)
+    {
+        if (string.IsNullOrEmpty(incoming))
+            return new StreamEvent(null, lastFull, null, status);
+
+        if (incomingIsFull)
+        {
+            if (incoming.StartsWith(lastFull, StringComparison.Ordinal))
+            {
+                var delta = incoming.Length > lastFull.Length ? incoming[lastFull.Length..] : null;
+                return new StreamEvent(delta, incoming, null, status);
+            }
+
+            if (lastFull.StartsWith(incoming, StringComparison.Ordinal))
+                return new StreamEvent(null, lastFull, null, status);
+
+            if (lastFull.EndsWith(incoming, StringComparison.Ordinal))
+                return new StreamEvent(null, lastFull, null, status);
+
+            return new StreamEvent(incoming, lastFull + incoming, null, status);
+        }
+
+        if (lastFull.EndsWith(incoming, StringComparison.Ordinal))
+            return new StreamEvent(null, lastFull, null, status);
+
+        return new StreamEvent(incoming, lastFull + incoming, null, status);
     }
 }

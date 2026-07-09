@@ -70,6 +70,26 @@ public sealed class ConfigService
         if (string.IsNullOrWhiteSpace(config.ModelId))
             config.ModelId = "auto";
 
+        if (string.IsNullOrWhiteSpace(config.AgentMode))
+            config.AgentMode = "agent";
+        else
+            config.AgentMode = config.AgentMode.ToLowerInvariant() switch
+            {
+                "ask" => "ask",
+                "plan" => "plan",
+                _ => "agent",
+            };
+
+        config.RecentWorkspaces = config.RecentWorkspaces
+            .Where(p => !string.IsNullOrWhiteSpace(p) && Directory.Exists(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .ToList();
+
+        if (!config.RecentWorkspaces.Contains(config.Workspace, StringComparer.OrdinalIgnoreCase))
+            config.RecentWorkspaces.Insert(0, config.Workspace);
+        config.RecentWorkspaces = config.RecentWorkspaces.Take(5).ToList();
+
         return config;
     }
 }

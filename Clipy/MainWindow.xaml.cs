@@ -29,6 +29,8 @@ public sealed partial class MainWindow : Window
     private readonly AppConfig _config;
     private readonly AgentService _agent;
     private readonly ThemeService _themes = new();
+    private readonly ChatHistoryService _chatHistory = new();
+    private readonly SpeechInputService _speech = new();
     private readonly TaskbarIcon _tray = new() { ToolTipText = "Clipy" };
     private readonly HotkeyService _hotkey = new();
     private readonly List<AttachmentItem> _attachments = new();
@@ -39,7 +41,12 @@ public sealed partial class MainWindow : Window
     private NativePoint _dragScreenStart;
     private PointInt32 _dragWindowStart;
     private bool _hasMessages;
+    private bool _homeMode = true;
     private PointInt32 _orbPos;
+    private ChatSession? _currentSession;
+    private DispatcherTimer? _mascotResetTimer;
+    private bool _loadingMode;
+    private bool _loadingRecentWorkspace;
 
     private static Mutex? _mutex;
     private FileSystemWatcher? _signalWatcher;
@@ -107,6 +114,11 @@ public sealed partial class MainWindow : Window
         ApplyPanelChromeColors();
         RefreshHeaderAvatar();
         RefreshFrameDecor();
+        UpdateScreenLayout();
+        SelectModeInSettings();
+        RefreshRecentWorkspaces();
+        RestoreSessionIfAny();
+        UpdateScreenLayout();
     }
 
     private void OnThemeChanged()
@@ -118,8 +130,36 @@ public sealed partial class MainWindow : Window
             RefreshHeaderAvatar();
             RefreshFrameDecor();
             RefreshThemeCards();
+            UpdateScreenLayout();
         });
     }
+
+    private void ShowHomeScreen()
+    {
+        _homeMode = true;
+        UpdateScreenLayout();
+    }
+
+    private void ShowChatScreen()
+    {
+        _homeMode = false;
+        UpdateScreenLayout();
+        ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null);
+    }
+
+    private void UpdateScreenLayout()
+    {
+        var onHome = _homeMode || !_hasMessages;
+        GreetingCard.Visibility = onHome ? Visibility.Visible : Visibility.Collapsed;
+        QuickActions.Visibility = onHome ? Visibility.Visible : Visibility.Collapsed;
+        ChatScroll.Visibility = onHome ? Visibility.Collapsed : Visibility.Visible;
+        OpenChatBtn.Visibility = onHome && _hasMessages ? Visibility.Visible : Visibility.Collapsed;
+        HomeBtn.Visibility = _hasMessages && !onHome ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void Home_Click(object sender, RoutedEventArgs e) => ShowHomeScreen();
+
+    private void OpenChat_Click(object sender, RoutedEventArgs e) => ShowChatScreen();
 
     private void ApplyPanelChromeColors()
     {
@@ -129,12 +169,52 @@ public sealed partial class MainWindow : Window
         var text = new SolidColorBrush(theme.Text);
         var muted = new SolidColorBrush(theme.Muted);
         var bg = new SolidColorBrush(theme.Background);
+        var border = new SolidColorBrush(theme.Border);
+        var subtleBorder = ThemeSubtleBorder(theme);
+        var inputBg = ThemeInputBackground(theme);
+        var onAccent = ThemeOnAccent(theme);
 
         PanelView.Background = bg;
+        PanelView.BorderBrush = subtleBorder;
         FrameBorder.Background = (Brush)Application.Current.Resources["PanelFrameGradient"];
+        HistoryOverlay.Background = bg;
         SettingsOverlay.Background = bg;
         StatusDot.Fill = accent;
         StatusText.Foreground = muted;
+        FooterStatus.Foreground = muted;
+        WorkspaceText.Foreground = muted;
+        InputBox.Background = inputBg;
+        InputBox.Foreground = text;
+        InputBox.BorderBrush = border;
+
+        ApplyOverlayHeader(HistoryTitleText, HistorySubtitleText, HistoryBackBtn, text, muted, card, accent);
+        ApplyOverlayHeader(SettingsTitleText, SettingsSubtitleText, SettingsBackBtn, text, muted, card, accent);
+
+        StyleSettingsCard(SettingsAuthCard, text, muted, card, subtleBorder);
+        StyleSettingsCard(SettingsModeCard, text, muted, card, subtleBorder);
+        StyleSettingsCard(SettingsModelCard, text, muted, card, subtleBorder);
+        StyleSettingsCard(SettingsWorkspaceCard, text, muted, card, subtleBorder);
+        StyleSettingsCard(SettingsThemesCard, text, muted, card, subtleBorder);
+
+        SettingsAuthStatus.Foreground = muted;
+        SettingsWorkspaceText.Foreground = muted;
+        SettingsLoginBtn.Background = accent;
+        SettingsLoginBtn.Foreground = onAccent;
+        SettingsLogoutBtn.Background = ThemeLogoutBackground(theme);
+        SettingsLogoutBtn.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0x8A, 0x8A));
+        SettingsFolderBtn.Background = card;
+        SettingsFolderBtn.Foreground = text;
+        StyleComboBox(SettingsModeCombo, card, text, border);
+        StyleComboBox(SettingsModelCombo, card, text, border);
+        StyleComboBox(SettingsRecentWorkspaceCombo, card, text, border);
+
+        HistoryEmptyIcon.Text = string.Equals(theme.Id, ThemeIds.Kawaii, StringComparison.OrdinalIgnoreCase)
+            ? "🌿"
+            : "💬";
+        HistoryEmptyCard.Background = card;
+        HistoryEmptyCard.BorderBrush = subtleBorder;
+        HistoryEmptyTitle.Foreground = text;
+        HistoryEmptyHint.Foreground = muted;
 
         if (HeaderBar.Children.OfType<Button>().ToList() is { Count: > 0 } headerButtons)
         {
@@ -142,22 +222,23 @@ public sealed partial class MainWindow : Window
             {
                 btn.Background = card;
                 if (btn.Content is FontIcon icon)
-                    icon.Foreground = text;
+                    icon.Foreground = btn == HomeBtn ? accent : text;
             }
         }
 
         GreetingCard.Background = card;
+        GreetingCard.BorderBrush = subtleBorder;
         if (GreetingCard.Child is TextBlock greet)
             greet.Foreground = text;
 
         foreach (var child in QuickActions.Children)
         {
             if (child is not Button btn) continue;
-            var isPrimary = QuickActions.Children.IndexOf(btn) == 0;
+            var isPrimary = btn == QuickActions.Children[0];
             if (isPrimary)
             {
                 btn.Background = accent;
-                btn.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x0B, 0x0B, 0x0F));
+                btn.Foreground = onAccent;
             }
             else
             {
@@ -165,6 +246,122 @@ public sealed partial class MainWindow : Window
                 btn.Foreground = text;
             }
         }
+
+        if (!_busy)
+            SendButton.Background = accent;
+
+        UpdateScreenLayout();
+    }
+
+    private static void ApplyOverlayHeader(
+        TextBlock title,
+        TextBlock subtitle,
+        Button backBtn,
+        SolidColorBrush text,
+        SolidColorBrush muted,
+        SolidColorBrush card,
+        SolidColorBrush accent)
+    {
+        title.Foreground = text;
+        subtitle.Foreground = muted;
+        backBtn.Background = card;
+        if (backBtn.Content is FontIcon icon)
+            icon.Foreground = accent;
+    }
+
+    private static void StyleSettingsCard(
+        Border cardBorder,
+        SolidColorBrush text,
+        SolidColorBrush muted,
+        SolidColorBrush card,
+        SolidColorBrush subtleBorder)
+    {
+        cardBorder.Background = card;
+        cardBorder.BorderBrush = subtleBorder;
+        if (cardBorder.Child is not StackPanel panel) return;
+        foreach (var child in panel.Children)
+        {
+            if (child is TextBlock tb)
+                tb.Foreground = tb.FontSize <= 11 && tb.FontWeight != Microsoft.UI.Text.FontWeights.SemiBold ? muted : text;
+        }
+    }
+
+    private static void StyleComboBox(ComboBox combo, SolidColorBrush bg, SolidColorBrush fg, SolidColorBrush border)
+    {
+        combo.Background = bg;
+        combo.Foreground = fg;
+        combo.BorderBrush = border;
+    }
+
+    private static SolidColorBrush ThemeSubtleBorder(ThemePalette theme)
+    {
+        var c = theme.Accent;
+        return new SolidColorBrush(Windows.UI.Color.FromArgb(0x44, c.R, c.G, c.B));
+    }
+
+    private static SolidColorBrush ThemeInputBackground(ThemePalette theme)
+    {
+        var bg = theme.Background;
+        var card = theme.Card;
+        return new SolidColorBrush(Windows.UI.Color.FromArgb(
+            255,
+            (byte)((bg.R + card.R) / 2),
+            (byte)((bg.G + card.G) / 2),
+            (byte)((bg.B + card.B) / 2)));
+    }
+
+    private static SolidColorBrush ThemeOnAccent(ThemePalette theme) =>
+        string.Equals(theme.Id, ThemeIds.Kawaii, StringComparison.OrdinalIgnoreCase)
+            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x12, 0x18, 0x10))
+            : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x0B, 0x0B, 0x0F));
+
+    private static SolidColorBrush ThemeLogoutBackground(ThemePalette theme)
+    {
+        var card = theme.Card;
+        return new SolidColorBrush(Windows.UI.Color.FromArgb(
+            255,
+            (byte)Math.Min(255, card.R + 20),
+            (byte)Math.Max(0, card.G - 30),
+            (byte)Math.Max(0, card.B - 30)));
+    }
+
+    private Border MakeHistorySessionCard(ChatSession session)
+    {
+        var theme = _themes.Current;
+        var accent = theme.Accent;
+        var card = new Border
+        {
+            Background = new SolidColorBrush(theme.Card),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x55, accent.R, accent.G, accent.B)),
+            BorderThickness = new Thickness(3, 1, 1, 1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(12, 10, 12, 10),
+            Tag = session,
+        };
+        var col = new StackPanel { Spacing = 4 };
+        col.Children.Add(new TextBlock
+        {
+            Text = session.Title,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(theme.Text),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        col.Children.Add(new TextBlock
+        {
+            Text = $"{session.UpdatedAt.ToLocalTime():g} · {session.Messages.Count} повід.",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(theme.Muted),
+        });
+        card.Child = col;
+        card.Tapped += (_, _) =>
+        {
+            if (card.Tag is ChatSession s)
+            {
+                LoadSession(s);
+                HistoryOverlay.Visibility = Visibility.Collapsed;
+            }
+        };
+        return card;
     }
 
     private void RefreshHeaderAvatar()
@@ -178,10 +375,14 @@ public sealed partial class MainWindow : Window
             var image = new BitmapImage();
             image.SetSource(ms.AsRandomAccessStream());
             HeaderAvatarImage.Source = image;
+            HistoryAvatarImage.Source = image;
+            SettingsAvatarImage.Source = image;
         }
         catch
         {
             HeaderAvatarImage.Source = null;
+            HistoryAvatarImage.Source = null;
+            SettingsAvatarImage.Source = null;
         }
     }
 
@@ -415,7 +616,15 @@ public sealed partial class MainWindow : Window
 
     private void Collapse_Click(object sender, RoutedEventArgs e) => Collapse();
 
-    private async void Send_Click(object sender, RoutedEventArgs e) => await SendAsync();
+    private async void Send_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy)
+        {
+            CancelRun();
+            return;
+        }
+        await SendAsync();
+    }
 
     private async void Input_Paste(object sender, TextControlPasteEventArgs e)
     {
@@ -609,6 +818,8 @@ public sealed partial class MainWindow : Window
         if (!_expanded) Expand();
         HideGreeting();
         AddBubble(display, true);
+        EnsureSession().Messages.Add(new ChatMessage { Role = "user", Text = display });
+        PersistSession(display);
         SetBusy(true);
         FooterStatus.Text = "Думаю…";
 
@@ -632,7 +843,13 @@ public sealed partial class MainWindow : Window
                 : _themes.Current.Text);
             var muted = new SolidColorBrush(_themes.Current.Muted);
             var accent = new SolidColorBrush(_themes.Current.Accent);
-            MarkdownRenderer.SetMarkdown(turn.Answer, markdown, fg, muted, accent);
+            var card = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+            turn.AnswerHost.Children.Clear();
+            MarkdownRenderer.Populate(turn.AnswerHost, markdown, fg, muted, accent, card);
+            turn.AnswerMarkdown = markdown;
+            turn.CopyBtn.Visibility = string.IsNullOrWhiteSpace(markdown)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
 
         await _agent.RunPromptAsync(
@@ -677,19 +894,25 @@ public sealed partial class MainWindow : Window
                         FooterStatus.Text = "Готово";
                         SetOnline(true);
                         _config.ChatId = _agent.ChatId;
-                        if (string.IsNullOrWhiteSpace(answerMarkdown))
-                            answerMarkdown = string.IsNullOrEmpty(final) ? "(порожня відповідь)" : final;
+                        if (!string.IsNullOrWhiteSpace(final))
+                            answerMarkdown = final;
+                        else if (string.IsNullOrWhiteSpace(answerMarkdown))
+                            answerMarkdown = "(порожня відповідь)";
                         RenderAnswer(answerMarkdown);
+                        AppendAssistantHistory(answerMarkdown);
+                        SetMascotState(MascotState.Success);
                     }
                     else if (code != -1)
                     {
                         FooterStatus.Text = "Помилка — перевір вхід";
                         SetOnline(false);
-                        if (string.IsNullOrWhiteSpace(answerMarkdown))
-                            answerMarkdown = string.IsNullOrEmpty(final)
-                                ? "Не вдалося отримати відповідь"
-                                : final;
+                        if (!string.IsNullOrWhiteSpace(final))
+                            answerMarkdown = final;
+                        else if (string.IsNullOrWhiteSpace(answerMarkdown))
+                            answerMarkdown = "Не вдалося отримати відповідь";
                         RenderAnswer(answerMarkdown, error: true);
+                        AppendAssistantHistory(answerMarkdown);
+                        SetMascotState(MascotState.Error);
                     }
                     else
                     {
@@ -697,6 +920,7 @@ public sealed partial class MainWindow : Window
                         if (string.IsNullOrWhiteSpace(answerMarkdown))
                             answerMarkdown = "Скасовано";
                         RenderAnswer(answerMarkdown);
+                        SetMascotState(MascotState.Idle);
                     }
                     Save();
                 });
@@ -709,7 +933,9 @@ public sealed partial class MainWindow : Window
     {
         public required TextBlock Status { get; init; }
         public required TextBlock Thinking { get; init; }
-        public required RichTextBlock Answer { get; init; }
+        public required StackPanel AnswerHost { get; init; }
+        public required Button CopyBtn { get; init; }
+        public string AnswerMarkdown { get; set; } = "";
     }
 
     private AssistantTurn AddAssistantTurn()
@@ -754,30 +980,53 @@ public sealed partial class MainWindow : Window
         };
 
         var body = new StackPanel { Spacing = 6 };
-        var answer = new RichTextBlock
+        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var copyBtn = new Button
         {
-            TextWrapping = TextWrapping.WrapWholeWords,
-            IsTextSelectionEnabled = true,
+            Content = "Копіювати",
+            FontSize = 10,
+            Padding = new Thickness(8, 2, 8, 2),
+            MinHeight = 0,
+            MinWidth = 0,
+            Visibility = Visibility.Collapsed,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+            Foreground = new SolidColorBrush(accent),
+            BorderThickness = new Thickness(0),
         };
-        answer.Blocks.Add(new Paragraph
+        var answerHost = new StackPanel { Spacing = 4 };
+        var turnRef = new AssistantTurn
         {
-            Inlines =
-            {
-                new Run
-                {
-                    Text = "⏳ Чекаю відповідь агента…",
-                    Foreground = new SolidColorBrush(_themes.Current.Muted),
-                },
-            },
+            Status = status,
+            Thinking = thinking,
+            AnswerHost = answerHost,
+            CopyBtn = copyBtn,
+        };
+        copyBtn.Click += (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(turnRef.AnswerMarkdown)) return;
+            var package = new DataPackage();
+            package.SetText(turnRef.AnswerMarkdown);
+            Clipboard.SetContent(package);
+            FooterStatus.Text = "Скопійовано";
+        };
+
+        answerHost.Children.Add(new TextBlock
+        {
+            Text = "⏳ Чекаю відповідь агента…",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(_themes.Current.Muted),
         });
+
+        toolbar.Children.Add(copyBtn);
         body.Children.Add(status);
         body.Children.Add(thinking);
-        body.Children.Add(answer);
+        body.Children.Add(toolbar);
+        body.Children.Add(answerHost);
         border.Child = body;
         stack.Children.Add(border);
         ChatPanel.Children.Add(stack);
         ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight + 80, null);
-        return new AssistantTurn { Status = status, Thinking = thinking, Answer = answer };
+        return turnRef;
     }
 
     private TextBlock AddBubble(string text, bool isUser)
@@ -813,8 +1062,7 @@ public sealed partial class MainWindow : Window
     {
         if (_hasMessages) return;
         _hasMessages = true;
-        GreetingCard.Visibility = Visibility.Collapsed;
-        QuickActions.Visibility = Visibility.Collapsed;
+        ShowChatScreen();
     }
 
     private bool _busy;
@@ -824,7 +1072,46 @@ public sealed partial class MainWindow : Window
         _busy = busy;
         InputBox.IsEnabled = !busy;
         if (busy)
+        {
             StatusText.Text = "Думає…";
+            SendIcon.Glyph = "\uE711";
+            SendButton.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x6B, 0x6B));
+            SetMascotState(MascotState.Thinking);
+        }
+        else
+        {
+            SendIcon.Glyph = "\uE724";
+            SendButton.Background = new SolidColorBrush(_themes.Current.Accent);
+            if (!_expanded || StatusDot.Fill is not SolidColorBrush)
+                StatusText.Text = "Online";
+            else
+                SetOnline(StatusText.Text != "Offline");
+        }
+    }
+
+    private void CancelRun()
+    {
+        _runCts?.Cancel();
+        _agent.Cancel();
+        SetBusy(false);
+        SetMascotState(MascotState.Idle);
+        FooterStatus.Text = "Скасовано";
+    }
+
+    private void SetMascotState(MascotState state)
+    {
+        _orb?.SetMascotState(state);
+        _mascotResetTimer?.Stop();
+        if (state is MascotState.Success or MascotState.Error)
+        {
+            _mascotResetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+            _mascotResetTimer.Tick += (_, _) =>
+            {
+                _mascotResetTimer?.Stop();
+                _orb?.SetMascotState(MascotState.Idle);
+            };
+            _mascotResetTimer.Start();
+        }
     }
 
     private void SetOnline(bool online)
@@ -874,7 +1161,11 @@ public sealed partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         SettingsOverlay.Visibility = Visibility.Visible;
+        HistoryOverlay.Visibility = Visibility.Collapsed;
+        ApplyPanelChromeColors();
         RefreshThemeCards();
+        SelectModeInSettings();
+        RefreshRecentWorkspaces();
         _ = UpdateSettingsAuthUiAsync();
         _ = LoadModelsAsync();
     }
@@ -946,11 +1237,228 @@ public sealed partial class MainWindow : Window
         await _agent.NewChatAsync();
         ChatPanel.Children.Clear();
         _hasMessages = false;
-        GreetingCard.Visibility = Visibility.Visible;
-        QuickActions.Visibility = Visibility.Visible;
+        _homeMode = true;
+        UpdateScreenLayout();
         ClearAttachments();
         _config.ChatId = null;
+        _currentSession = _chatHistory.CreateSession(_agent.Workspace);
+        _config.LocalSessionId = _currentSession.Id;
         Save();
+    }
+
+    private void History_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        HistoryOverlay.Visibility = Visibility.Visible;
+        ApplyPanelChromeColors();
+        RefreshHistoryList();
+    }
+
+    private void HistoryBack_Click(object sender, RoutedEventArgs e)
+    {
+        HistoryOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void RefreshHistoryList()
+    {
+        HistoryPanel.Children.Clear();
+        foreach (var session in _chatHistory.List())
+            HistoryPanel.Children.Add(MakeHistorySessionCard(session));
+
+        var hasItems = HistoryPanel.Children.Count > 0;
+        HistoryEmptyCard.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
+        HistoryPanel.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void LoadSession(ChatSession session)
+    {
+        _currentSession = session;
+        _config.LocalSessionId = session.Id;
+        _config.ChatId = session.AgentChatId;
+        if (!string.IsNullOrWhiteSpace(session.Workspace) && Directory.Exists(session.Workspace))
+        {
+            _agent.Workspace = session.Workspace;
+            _config.Workspace = session.Workspace;
+            WorkspaceText.Text = session.Workspace;
+            SettingsWorkspaceText.Text = session.Workspace;
+        }
+        ChatPanel.Children.Clear();
+        _hasMessages = session.Messages.Count > 0;
+        if (_hasMessages)
+            ShowChatScreen();
+        else
+            ShowHomeScreen();
+        foreach (var msg in session.Messages)
+        {
+            if (msg.Role == "user")
+                AddBubble(msg.Text, true);
+            else
+            {
+                var turn = AddAssistantTurn();
+                turn.Status.Visibility = Visibility.Collapsed;
+                var fg = new SolidColorBrush(_themes.Current.Text);
+                var muted = new SolidColorBrush(_themes.Current.Muted);
+                var accent = new SolidColorBrush(_themes.Current.Accent);
+                var card = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+                turn.AnswerHost.Children.Clear();
+                MarkdownRenderer.Populate(turn.AnswerHost, msg.Text, fg, muted, accent, card);
+                turn.AnswerMarkdown = msg.Text;
+                turn.CopyBtn.Visibility = Visibility.Visible;
+            }
+        }
+        Save();
+    }
+
+    private void RestoreSessionIfAny()
+    {
+        if (string.IsNullOrEmpty(_config.LocalSessionId)) return;
+        var session = _chatHistory.Load(_config.LocalSessionId);
+        if (session is null) return;
+        _currentSession = session;
+        if (session.Messages.Count == 0) return;
+        LoadSession(session);
+    }
+
+    private ChatSession EnsureSession()
+    {
+        if (_currentSession is not null)
+        {
+            if (!string.IsNullOrEmpty(_currentSession.AgentChatId))
+                _config.ChatId = _currentSession.AgentChatId;
+            return _currentSession;
+        }
+        if (!string.IsNullOrEmpty(_config.LocalSessionId))
+        {
+            _currentSession = _chatHistory.Load(_config.LocalSessionId);
+            if (_currentSession is not null)
+            {
+                if (!string.IsNullOrEmpty(_currentSession.AgentChatId))
+                    _config.ChatId = _currentSession.AgentChatId;
+                return _currentSession;
+            }
+        }
+        _currentSession = _chatHistory.CreateSession(_agent.Workspace);
+        _config.LocalSessionId = _currentSession.Id;
+        Save();
+        return _currentSession;
+    }
+
+    private void PersistSession(string? firstUserLine = null)
+    {
+        if (_currentSession is null) return;
+        _currentSession.AgentChatId = _config.ChatId;
+        _currentSession.Workspace = _agent.Workspace;
+        if (!string.IsNullOrWhiteSpace(firstUserLine) && _currentSession.Messages.Count == 1)
+            _currentSession.Title = ChatHistoryService.MakeTitle(firstUserLine);
+        _chatHistory.Save(_currentSession);
+    }
+
+    private void AppendAssistantHistory(string text)
+    {
+        if (_currentSession is null || string.IsNullOrWhiteSpace(text)) return;
+        _currentSession.Messages.Add(new ChatMessage { Role = "assistant", Text = text });
+        _currentSession.AgentChatId = _config.ChatId;
+        _chatHistory.Save(_currentSession);
+    }
+
+    private async void Voice_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        FooterStatus.Text = "Слухаю… (може з'явитись вікно Windows)";
+        var outcome = await _speech.RecognizeAsync();
+        if (outcome.Cancelled)
+        {
+            FooterStatus.Text = "Скасовано";
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(outcome.Error))
+        {
+            FooterStatus.Text = outcome.Error;
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(outcome.Text))
+        {
+            FooterStatus.Text = "Голос не розпізнано";
+            return;
+        }
+        InputBox.Text = string.IsNullOrWhiteSpace(InputBox.Text)
+            ? outcome.Text
+            : InputBox.Text.TrimEnd() + " " + outcome.Text;
+        FooterStatus.Text = "Голос додано";
+        InputBox.Focus(FocusState.Programmatic);
+    }
+
+    private void SelectModeInSettings()
+    {
+        _loadingMode = true;
+        var mode = _config.AgentMode ?? "agent";
+        for (var i = 0; i < SettingsModeCombo.Items.Count; i++)
+        {
+            if (SettingsModeCombo.Items[i] is ComboBoxItem item
+                && string.Equals(item.Tag as string, mode, StringComparison.OrdinalIgnoreCase))
+            {
+                SettingsModeCombo.SelectedIndex = i;
+                break;
+            }
+        }
+        _loadingMode = false;
+    }
+
+    private void SettingsMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingMode) return;
+        if (SettingsModeCombo.SelectedItem is not ComboBoxItem item) return;
+        var mode = item.Tag as string ?? "agent";
+        if (string.Equals(_config.AgentMode, mode, StringComparison.OrdinalIgnoreCase)) return;
+        _config.AgentMode = mode;
+        Save();
+        FooterStatus.Text = $"Режим: {item.Content}";
+    }
+
+    private void RefreshRecentWorkspaces()
+    {
+        _loadingRecentWorkspace = true;
+        SettingsRecentWorkspaceCombo.Items.Clear();
+        var selected = 0;
+        for (var i = 0; i < _config.RecentWorkspaces.Count; i++)
+        {
+            var path = _config.RecentWorkspaces[i];
+            SettingsRecentWorkspaceCombo.Items.Add(new ComboBoxItem { Content = path, Tag = path });
+            if (string.Equals(path, _agent.Workspace, StringComparison.OrdinalIgnoreCase))
+                selected = i;
+        }
+        if (SettingsRecentWorkspaceCombo.Items.Count > 0)
+            SettingsRecentWorkspaceCombo.SelectedIndex = selected;
+        _loadingRecentWorkspace = false;
+    }
+
+    private void SettingsRecentWorkspace_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingRecentWorkspace) return;
+        if (SettingsRecentWorkspaceCombo.SelectedItem is not ComboBoxItem item) return;
+        var path = item.Tag as string;
+        if (string.IsNullOrWhiteSpace(path)) return;
+        ApplyWorkspace(path);
+    }
+
+    private void ApplyWorkspace(string path)
+    {
+        if (!Directory.Exists(path)) return;
+        _agent.Workspace = path;
+        _config.Workspace = path;
+        WorkspaceText.Text = path;
+        SettingsWorkspaceText.Text = path;
+        TrackRecentWorkspace(path);
+        RefreshRecentWorkspaces();
+        Save();
+    }
+
+    private void TrackRecentWorkspace(string path)
+    {
+        _config.RecentWorkspaces.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+        _config.RecentWorkspaces.Insert(0, path);
+        if (_config.RecentWorkspaces.Count > 5)
+            _config.RecentWorkspaces = _config.RecentWorkspaces.Take(5).ToList();
     }
 
     private async void Folder_Click(object sender, RoutedEventArgs e)
@@ -961,13 +1469,7 @@ public sealed partial class MainWindow : Window
         picker.FileTypeFilter.Add("*");
         var folder = await picker.PickSingleFolderAsync();
         if (folder is not null)
-        {
-            _agent.Workspace = folder.Path;
-            _config.Workspace = folder.Path;
-            WorkspaceText.Text = folder.Path;
-            SettingsWorkspaceText.Text = folder.Path;
-            Save();
-        }
+            ApplyWorkspace(folder.Path);
     }
 
     private void SetupTray()
@@ -1024,8 +1526,10 @@ public sealed partial class MainWindow : Window
         _config.Expanded = _expanded;
         _config.Workspace = _agent.Workspace;
         _config.ChatId = _agent.ChatId;
+        _config.LocalSessionId = _currentSession?.Id ?? _config.LocalSessionId;
         _config.ThemeId = _themes.Current.Id;
         _config.ModelId = string.IsNullOrWhiteSpace(_config.ModelId) ? "auto" : _config.ModelId;
+        _config.AgentMode = string.IsNullOrWhiteSpace(_config.AgentMode) ? "agent" : _config.AgentMode;
         _configService.Save(_config);
     }
 

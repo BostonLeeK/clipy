@@ -38,10 +38,24 @@ public sealed class NativeOrbWindow : IDisposable
     private Point _dragScreenStart;
     private Point _dragWindowStart;
     private double _phase;
+    private double _phaseStep = 0.18;
+    private MascotState _mascotState = MascotState.Idle;
     private GCHandle _selfHandle;
 
     public event Action? Clicked;
     public event Action<PointInt32>? Moved;
+
+    public void SetMascotState(MascotState state)
+    {
+        _mascotState = state;
+        _phaseStep = state switch
+        {
+            MascotState.Thinking => 0.34,
+            MascotState.Success => 0.26,
+            MascotState.Error => 0.10,
+            _ => 0.18,
+        };
+    }
 
     private delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -297,7 +311,7 @@ public sealed class NativeOrbWindow : IDisposable
             case WmTimer:
                 if (wParam.ToInt32() == TimerId)
                 {
-                    _phase += 0.18;
+                    _phase += _phaseStep;
                     Present();
                 }
                 return IntPtr.Zero;

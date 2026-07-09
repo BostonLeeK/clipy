@@ -3,15 +3,22 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.UI.Text;
 
 namespace Clipy.Helpers;
 
 public static class MarkdownRenderer
 {
-    public static void SetMarkdown(RichTextBlock target, string markdown, Brush foreground, Brush muted, Brush accent)
+    public static void Populate(
+        StackPanel target,
+        string markdown,
+        Brush foreground,
+        Brush muted,
+        Brush accent,
+        Brush card)
     {
-        target.Blocks.Clear();
+        target.Children.Clear();
         if (string.IsNullOrWhiteSpace(markdown))
             return;
 
@@ -32,7 +39,7 @@ public static class MarkdownRenderer
                     i++;
                 }
                 if (i < lines.Length) i++;
-                target.Blocks.Add(MakeCodeBlock(code.ToString(), muted, foreground));
+                target.Children.Add(MakeCodeBlock(code.ToString(), muted, card, accent));
                 continue;
             }
 
@@ -44,7 +51,7 @@ public static class MarkdownRenderer
 
             if (TryHeader(line, out var level, out var headerText))
             {
-                target.Blocks.Add(MakeHeader(headerText, level, foreground, accent));
+                target.Children.Add(MakeRichBlock(MakeHeader(headerText, level, foreground, accent)));
                 i++;
                 continue;
             }
@@ -59,7 +66,7 @@ public static class MarkdownRenderer
                     i++;
                 }
                 foreach (var item in items)
-                    target.Blocks.Add(MakeParagraph("• " + item, foreground, muted, accent));
+                    target.Children.Add(MakeRichBlock(MakeParagraph("• " + item, foreground, muted, accent)));
                 continue;
             }
 
@@ -73,31 +80,100 @@ public static class MarkdownRenderer
                     i++;
                 }
                 foreach (var item in items)
-                    target.Blocks.Add(MakeParagraph($"{item.Num}. {item.Text}", foreground, muted, accent));
+                    target.Children.Add(MakeRichBlock(MakeParagraph($"{item.Num}. {item.Text}", foreground, muted, accent)));
                 continue;
             }
 
             if (line.StartsWith("---", StringComparison.Ordinal) || line.StartsWith("***", StringComparison.Ordinal))
             {
-                var rule = new Paragraph { Margin = new Thickness(0, 6, 0, 6) };
-                rule.Inlines.Add(new Run
-                {
-                    Text = "────────",
-                    Foreground = muted,
-                    FontSize = 11,
-                });
-                target.Blocks.Add(rule);
+                target.Children.Add(MakeRichBlock(MakeRule(muted)));
                 i++;
                 continue;
             }
 
-            var para = MakeParagraph(line, foreground, muted, accent);
-            target.Blocks.Add(para);
+            target.Children.Add(MakeRichBlock(MakeParagraph(line, foreground, muted, accent)));
             i++;
         }
 
-        if (target.Blocks.Count == 0)
-            target.Blocks.Add(MakeParagraph(markdown.Trim(), foreground, muted, accent));
+        if (target.Children.Count == 0)
+            target.Children.Add(MakeRichBlock(MakeParagraph(markdown.Trim(), foreground, muted, accent)));
+    }
+
+    public static void SetMarkdown(RichTextBlock target, string markdown, Brush foreground, Brush muted, Brush accent)
+    {
+        target.Blocks.Clear();
+        if (string.IsNullOrWhiteSpace(markdown))
+            return;
+        var host = new StackPanel();
+        Populate(host, markdown, foreground, muted, accent, new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)));
+        foreach (var child in host.Children.OfType<RichTextBlock>())
+        {
+            foreach (var block in child.Blocks)
+                target.Blocks.Add(block);
+        }
+    }
+
+    private static RichTextBlock MakeRichBlock(Paragraph paragraph)
+    {
+        var rtb = new RichTextBlock
+        {
+            TextWrapping = TextWrapping.WrapWholeWords,
+            IsTextSelectionEnabled = true,
+        };
+        rtb.Blocks.Add(paragraph);
+        return rtb;
+    }
+
+    private static UIElement MakeCodeBlock(string code, Brush muted, Brush card, Brush accent)
+    {
+        var border = new Border
+        {
+            Background = card,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8),
+            Margin = new Thickness(0, 4, 0, 4),
+        };
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var copy = new Button
+        {
+            Content = "Копіювати",
+            FontSize = 10,
+            Padding = new Thickness(8, 2, 8, 2),
+            MinHeight = 0,
+            MinWidth = 0,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)),
+            Foreground = accent,
+            BorderThickness = new Thickness(0),
+        };
+        copy.Click += (_, _) => CopyToClipboard(code);
+        Grid.SetRow(copy, 0);
+
+        var tb = new TextBlock
+        {
+            Text = code,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12,
+            Foreground = muted,
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+        };
+        Grid.SetRow(tb, 1);
+
+        grid.Children.Add(copy);
+        grid.Children.Add(tb);
+        border.Child = grid;
+        return border;
+    }
+
+    private static void CopyToClipboard(string text)
+    {
+        var package = new DataPackage();
+        package.SetText(text);
+        Clipboard.SetContent(package);
     }
 
     private static bool TryHeader(string line, out int level, out string text)
@@ -141,35 +217,22 @@ public static class MarkdownRenderer
 
     private static Paragraph MakeHeader(string text, int level, Brush foreground, Brush accent)
     {
-        var p = new Paragraph
-        {
-            Margin = new Thickness(0, level == 1 ? 8 : 6, 0, 4),
-        };
-        var run = new Run
+        var p = new Paragraph { Margin = new Thickness(0, level == 1 ? 8 : 6, 0, 4) };
+        p.Inlines.Add(new Run
         {
             Text = StripInlineMarkers(text),
             Foreground = accent,
             FontWeight = FontWeights.SemiBold,
             FontSize = level switch { 1 => 16, 2 => 14.5, _ => 13.5 },
-        };
-        p.Inlines.Add(run);
+        });
         return p;
     }
 
-    private static Paragraph MakeCodeBlock(string code, Brush muted, Brush foreground)
+    private static Paragraph MakeRule(Brush muted)
     {
-        var p = new Paragraph
-        {
-            Margin = new Thickness(0, 6, 0, 6),
-        };
-        p.Inlines.Add(new Run
-        {
-            Text = code,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12,
-            Foreground = muted,
-        });
-        return p;
+        var rule = new Paragraph { Margin = new Thickness(0, 6, 0, 6) };
+        rule.Inlines.Add(new Run { Text = "────────", Foreground = muted, FontSize = 11 });
+        return rule;
     }
 
     private static Paragraph MakeParagraph(string text, Brush foreground, Brush muted, Brush accent)
@@ -187,12 +250,7 @@ public static class MarkdownRenderer
             if (TryTake(text, i, "**", out var bold, out var next)
                 || TryTake(text, i, "__", out bold, out next))
             {
-                inlines.Add(new Run
-                {
-                    Text = bold,
-                    FontWeight = FontWeights.Bold,
-                    Foreground = foreground,
-                });
+                inlines.Add(new Run { Text = bold, FontWeight = FontWeights.Bold, Foreground = foreground });
                 i = next;
                 continue;
             }
@@ -200,12 +258,7 @@ public static class MarkdownRenderer
             if (TryTake(text, i, "*", out var italic, out next)
                 || TryTake(text, i, "_", out italic, out next))
             {
-                inlines.Add(new Run
-                {
-                    Text = italic,
-                    FontStyle = FontStyle.Italic,
-                    Foreground = foreground,
-                });
+                inlines.Add(new Run { Text = italic, FontStyle = FontStyle.Italic, Foreground = foreground });
                 i = next;
                 continue;
             }
@@ -224,11 +277,7 @@ public static class MarkdownRenderer
             }
 
             var end = FindNextMarker(text, i);
-            inlines.Add(new Run
-            {
-                Text = text[i..end],
-                Foreground = foreground,
-            });
+            inlines.Add(new Run { Text = text[i..end], Foreground = foreground });
             i = end;
         }
     }
@@ -261,11 +310,8 @@ public static class MarkdownRenderer
         return best;
     }
 
-    private static string StripInlineMarkers(string text)
-    {
-        return text
-            .Replace("**", "", StringComparison.Ordinal)
+    private static string StripInlineMarkers(string text) =>
+        text.Replace("**", "", StringComparison.Ordinal)
             .Replace("__", "", StringComparison.Ordinal)
             .Replace("`", "", StringComparison.Ordinal);
-    }
 }

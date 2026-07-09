@@ -3,6 +3,7 @@ bin/
 obj/
 publish/
 out/
+dist/
 [Bb]uild/
 [Dd]ebug/
 [Rr]elease/

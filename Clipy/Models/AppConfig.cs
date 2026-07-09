@@ -21,6 +21,9 @@ public sealed class AppConfig
     [JsonPropertyName("chat_id")]
     public string? ChatId { get; set; }
 
+    [JsonPropertyName("local_session_id")]
+    public string? LocalSessionId { get; set; }
+
     [JsonPropertyName("expanded")]
     public bool Expanded { get; set; }
 
@@ -29,4 +32,10 @@ public sealed class AppConfig
 
     [JsonPropertyName("model_id")]
     public string ModelId { get; set; } = "auto";
+
+    [JsonPropertyName("agent_mode")]
+    public string AgentMode { get; set; } = "agent";
+
+    [JsonPropertyName("recent_workspaces")]
+    public List<string> RecentWorkspaces { get; set; } = new();
 }

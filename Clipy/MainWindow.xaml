@@ -1,0 +1,183 @@
+<Window
+    x:Class="Clipy.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Clipy.Controls">
+
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <Border x:Name="FrameBorder" Width="380" Height="600" CornerRadius="22" Padding="1.5"
+                BorderThickness="0" Background="{StaticResource PanelFrameGradient}">
+            <Border x:Name="PanelView" CornerRadius="20.5" BorderThickness="1"
+                    BorderBrush="#22FFFFFF" Background="{StaticResource BgBrush}">
+            <Grid Padding="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid x:Name="HeaderBar" Grid.Row="0" Margin="0,0,0,8" PointerPressed="Header_PointerPressed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Width="32" Height="32" CornerRadius="16"
+                            VerticalAlignment="Center" Background="Transparent">
+                        <Image x:Name="HeaderAvatarImage" Width="32" Height="32"
+                               Stretch="Uniform" IsHitTestVisible="False" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Clipy" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="{StaticResource AccentBrush}" />
+                            <TextBlock x:Name="StatusText" Text="Online" FontSize="11" Foreground="{StaticResource MutedBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                    <Button Grid.Column="2" Style="{StaticResource IconButtonStyle}" Width="32" Height="32"
+                            Margin="0,0,6,0" Click="Settings_Click" Background="{StaticResource CardBrush}" CornerRadius="16">
+                        <FontIcon Glyph="&#xE713;" FontSize="14" Foreground="{StaticResource TextBrush}" />
+                    </Button>
+                    <Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" Width="32" Height="32"
+                            Click="Collapse_Click" Background="{StaticResource CardBrush}" CornerRadius="16">
+                        <FontIcon Glyph="&#xE921;" FontSize="12" Foreground="{StaticResource TextBrush}" />
+                    </Button>
+                </Grid>
+
+                <Border x:Name="GreetingCard" Grid.Row="1" Background="{StaticResource CardBrush}" CornerRadius="14"
+                        Padding="14" Margin="0,0,0,10" BorderBrush="#22FFFFFF" BorderThickness="1">
+                    <TextBlock Text="Привіт 👋&#x0a;Чим допомогти сьогодні?" Foreground="{StaticResource TextBrush}" />
+                </Border>
+
+                <StackPanel x:Name="QuickActions" Grid.Row="2" Orientation="Horizontal" Spacing="6" Margin="0,0,0,10">
+                    <Button Style="{StaticResource ActionButtonStyle}" Content="Новий чат" Click="NewChat_Click"
+                            Background="{StaticResource AccentBrush}" Foreground="#0B0B0F" CornerRadius="10" Padding="12,6" />
+                    <Button Style="{StaticResource ActionButtonStyle}" Content="Папка" Click="Folder_Click"
+                            Background="{StaticResource CardBrush}" Foreground="{StaticResource TextBrush}"
+                            CornerRadius="10" Padding="12,6" />
+                </StackPanel>
+
+                <TextBlock x:Name="WorkspaceText" Grid.Row="3" FontSize="10" Foreground="{StaticResource MutedBrush}"
+                           Margin="2,0,0,8" TextTrimming="CharacterEllipsis" />
+
+                <ScrollViewer Grid.Row="4" x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="ChatPanel" Spacing="8" />
+                </ScrollViewer>
+
+                <ScrollViewer x:Name="AttachScroll" Grid.Row="5" Visibility="Collapsed"
+                              HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                              Margin="0,8,0,0">
+                    <StackPanel x:Name="AttachPanel" Orientation="Horizontal" Spacing="6" />
+                </ScrollViewer>
+
+                <Grid Grid.Row="6" Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
+                            Click="AttachFile_Click" Background="{StaticResource CardBrush}" CornerRadius="12"
+                            ToolTipService.ToolTip="Додати файл / папку">
+                        <FontIcon Glyph="&#xE8E5;" FontSize="14" Foreground="{StaticResource TextBrush}" />
+                    </Button>
+                    <Button Grid.Column="1" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
+                            Margin="6,0,0,0" Click="Screenshot_Click" Background="{StaticResource CardBrush}" CornerRadius="12"
+                            ToolTipService.ToolTip="Скрін екрана (Ctrl+Shift+S)">
+                        <FontIcon Glyph="&#xE7C5;" FontSize="14" Foreground="{StaticResource TextBrush}" />
+                    </Button>
+                    <controls:ChatInputBox x:Name="InputBox" Grid.Column="2"
+                             PlaceholderText="Напиши задачу…  Ctrl+Enter — надіслати"
+                             AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="80" MinHeight="44"
+                             Margin="8,0,0,0" Background="#111118" Foreground="{StaticResource TextBrush}"
+                             BorderBrush="{StaticResource BorderBrush}" CornerRadius="12"
+                             Paste="Input_Paste" AllowDrop="True"
+                             DragOver="Input_DragOver" Drop="Input_Drop" />
+                    <Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" Width="44" Height="44"
+                            Margin="8,0,0,0" Click="Send_Click" Background="{StaticResource AccentBrush}" CornerRadius="22">
+                        <FontIcon Glyph="&#xE724;" FontSize="16" Foreground="#0B0B0F" />
+                    </Button>
+                </Grid>
+
+                <TextBlock x:Name="FooterStatus" Grid.Row="7" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="2,6,0,0"
+                           Text="Ctrl+Enter — надіслати · Ctrl+Shift+C — відкрити/сховати" />
+
+                <Grid x:Name="SettingsOverlay" Grid.RowSpan="8" Visibility="Collapsed" Background="{StaticResource BgBrush}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,16">
+                        <TextBlock Text="Налаштування" FontSize="16" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
+                        <Button Style="{StaticResource IconButtonStyle}" HorizontalAlignment="Right" Width="32" Height="32"
+                                Click="SettingsBack_Click" Background="{StaticResource CardBrush}" CornerRadius="16">
+                            <FontIcon Glyph="&#xE72B;" FontSize="14" Foreground="{StaticResource TextBrush}" />
+                        </Button>
+                    </Grid>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="12">
+                            <Border Background="{StaticResource CardBrush}" CornerRadius="14" Padding="14"
+                                    BorderBrush="#22FFFFFF" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Cursor Agent" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                    <TextBlock x:Name="SettingsAuthStatus" FontSize="12" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                                    <Button x:Name="SettingsLoginBtn" Style="{StaticResource ActionButtonStyle}"
+                                            Content="Увійти в Cursor" Click="SettingsLogin_Click"
+                                            Background="#8B7CF6" Foreground="White" CornerRadius="10" Padding="12,8"
+                                            HorizontalAlignment="Stretch" />
+                                    <Button x:Name="SettingsLogoutBtn" Style="{StaticResource ActionButtonStyle}"
+                                            Content="Вийти" Click="SettingsLogout_Click"
+                                            Background="#2A1A1A" Foreground="#FF8A8A" CornerRadius="10" Padding="12,8"
+                                            HorizontalAlignment="Stretch" Visibility="Collapsed" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource CardBrush}" CornerRadius="14" Padding="14"
+                                    BorderBrush="#22FFFFFF" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Модель" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                    <TextBlock Text="Для спілкування через Cursor Agent CLI" FontSize="11" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                                    <ComboBox x:Name="SettingsModelCombo" HorizontalAlignment="Stretch"
+                                              SelectionChanged="SettingsModel_SelectionChanged" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource CardBrush}" CornerRadius="14" Padding="14"
+                                    BorderBrush="#22FFFFFF" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Робоча папка" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                    <TextBlock x:Name="SettingsWorkspaceText" FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                                    <Button Style="{StaticResource ActionButtonStyle}" Content="Змінити папку" Click="Folder_Click"
+                                            Background="{StaticResource CardBrush}" Foreground="{StaticResource TextBrush}"
+                                            CornerRadius="10" Padding="12,8" HorizontalAlignment="Stretch" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource CardBrush}" CornerRadius="14" Padding="14"
+                                    BorderBrush="#22FFFFFF" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Теми" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                    <TextBlock Text="Маскот і кольори панелі" FontSize="11" Foreground="{StaticResource MutedBrush}" />
+                                    <StackPanel x:Name="ThemesPanel" Spacing="6" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+            </Border>
+        </Border>
+        <Image x:Name="FrameDecorImage" Width="380" Height="600"
+               Stretch="Fill" IsHitTestVisible="False" Visibility="Collapsed" />
+    </Grid>
+</Window>

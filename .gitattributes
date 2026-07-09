@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.{cmd,bat,ps1} text eol=crlf
+*.{sln,csproj,props,targets,config,manifest} text eol=crlf
+*.{cs,xaml,json,md} text eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.ppm binary

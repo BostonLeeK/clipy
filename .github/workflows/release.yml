@@ -75,10 +75,29 @@ jobs:
           }
 
       - name: Build installer
-        uses: amake/innosetup-compiler-action@v1.0.0
-        with:
-          path: installer/Clipy.iss
-          options: /DAppVersion=${{ steps.version.outputs.value }} /DPublishDir=${{ github.workspace }}/publish /DOutputDir=${{ github.workspace }}/dist /DSourcePath=${{ github.workspace }}/installer /DIconFile=clipy.ico
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) {
+            throw "ISCC.exe not found after Inno Setup install"
+          }
+          $version = "${{ steps.version.outputs.value }}"
+          $publish = (Resolve-Path publish).Path
+          $dist = (Resolve-Path dist).Path
+          $installer = (Resolve-Path installer).Path
+          & $iscc installer/Clipy.iss `
+            "/DAppVersion=$version" `
+            "/DPublishDir=$publish" `
+            "/DOutputDir=$dist" `
+            "/DSourcePath=$installer" `
+            "/DIconFile=clipy.ico" `
+            /Qp
+          $setup = Get-ChildItem dist -Filter "Clipy-Setup-$version-x64.exe" | Select-Object -First 1
+          if (-not $setup) { throw "Installer not found in dist/" }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -193,7 +193,19 @@ public sealed class AgentService
 
             while (!ct.IsCancellationRequested)
             {
-                var line = await _process.StandardOutput.ReadLineAsync(ct);
+                string? line;
+                try
+                {
+                    using var lineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    lineCts.CancelAfter(TimeSpan.FromMinutes(2));
+                    line = await _process.StandardOutput.ReadLineAsync(lineCts.Token);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    onStatus("Агент ще працює…");
+                    continue;
+                }
+
                 if (line is null) break;
                 line = line.Trim();
                 if (line.Length == 0) continue;

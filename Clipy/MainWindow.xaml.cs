@@ -42,6 +42,7 @@ public sealed partial class MainWindow : Window
     private PointInt32 _dragWindowStart;
     private bool _hasMessages;
     private bool _homeMode = true;
+    private bool _userCancelledRun;
     private PointInt32 _orbPos;
     private ChatSession? _currentSession;
     private DispatcherTimer? _mascotResetTimer;
@@ -149,7 +150,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateScreenLayout()
     {
-        var onHome = _homeMode || !_hasMessages;
+        var onHome = (_homeMode || !_hasMessages) && !_busy;
         GreetingCard.Visibility = onHome ? Visibility.Visible : Visibility.Collapsed;
         QuickActions.Visibility = onHome ? Visibility.Visible : Visibility.Collapsed;
         ChatScroll.Visibility = onHome ? Visibility.Collapsed : Visibility.Visible;
@@ -816,15 +817,17 @@ public sealed partial class MainWindow : Window
         InputBox.Text = "";
         ClearAttachments();
         if (!_expanded) Expand();
-        HideGreeting();
+        EnterChatMode();
         AddBubble(display, true);
         EnsureSession().Messages.Add(new ChatMessage { Role = "user", Text = display });
         PersistSession(display);
         SetBusy(true);
         FooterStatus.Text = "Думаю…";
 
+        _userCancelledRun = false;
         _runCts?.Cancel();
         _runCts = new CancellationTokenSource();
+        _runCts.CancelAfter(TimeSpan.FromMinutes(10));
         var turn = AddAssistantTurn();
         var gotAnswer = false;
         var thinkingLen = 0;
@@ -852,6 +855,8 @@ public sealed partial class MainWindow : Window
                 : Visibility.Visible;
         }
 
+        try
+        {
         await _agent.RunPromptAsync(
             string.IsNullOrEmpty(text) ? "Analyze the attached context." : text,
             s => Ui(() =>
@@ -916,9 +921,11 @@ public sealed partial class MainWindow : Window
                     }
                     else
                     {
-                        FooterStatus.Text = "Скасовано";
+                        FooterStatus.Text = _userCancelledRun
+                            ? "Скасовано"
+                            : "Агент не відповів (таймаут 10 хв)";
                         if (string.IsNullOrWhiteSpace(answerMarkdown))
-                            answerMarkdown = "Скасовано";
+                            answerMarkdown = _userCancelledRun ? "Скасовано" : "Час очікування вичерпано";
                         RenderAnswer(answerMarkdown);
                         SetMascotState(MascotState.Idle);
                     }
@@ -927,6 +934,16 @@ public sealed partial class MainWindow : Window
             },
             attachments,
             _runCts.Token);
+        }
+        catch (Exception ex)
+        {
+            Ui(() =>
+            {
+                SetBusy(false);
+                FooterStatus.Text = ex.Message;
+                SetMascotState(MascotState.Error);
+            });
+        }
     }
 
     private sealed class AssistantTurn
@@ -1058,9 +1075,8 @@ public sealed partial class MainWindow : Window
         return tb;
     }
 
-    private void HideGreeting()
+    private void EnterChatMode()
     {
-        if (_hasMessages) return;
         _hasMessages = true;
         ShowChatScreen();
     }
@@ -1087,10 +1103,13 @@ public sealed partial class MainWindow : Window
             else
                 SetOnline(StatusText.Text != "Offline");
         }
+
+        UpdateScreenLayout();
     }
 
     private void CancelRun()
     {
+        _userCancelledRun = true;
         _runCts?.Cancel();
         _agent.Cancel();
         SetBusy(false);

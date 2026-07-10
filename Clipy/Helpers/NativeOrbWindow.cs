@@ -14,6 +14,10 @@ public sealed class NativeOrbWindow : IDisposable
     private const int WsExToolWindow = 0x00000080;
     private const int WsExTopmost = 0x00000008;
     private const int WmDestroy = 0x0002;
+    private const int WmSetCursor = 0x0020;
+    private const int HtClient = 1;
+    private const int IdcArrow = 32512;
+    private const int IdcHand = 32649;
     private const int WmLButtonDown = 0x0201;
     private const int WmLButtonUp = 0x0202;
     private const int WmMouseMove = 0x0200;
@@ -28,6 +32,8 @@ public sealed class NativeOrbWindow : IDisposable
     private static readonly IntPtr HwndTopmost = new(-1);
     private static bool _classRegistered;
     private static WndProc? _wndProcKeepAlive;
+    private static IntPtr _arrowCursor;
+    private static IntPtr _handCursor;
 
     private readonly int _size;
     private IMascotRenderer _renderer;
@@ -141,6 +147,12 @@ public sealed class NativeOrbWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetCursor(IntPtr hCursor);
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out Point lpPoint);
@@ -274,13 +286,15 @@ public sealed class NativeOrbWindow : IDisposable
     {
         if (_classRegistered) return;
         _wndProcKeepAlive = StaticWndProc;
+        _arrowCursor = LoadCursor(IntPtr.Zero, IdcArrow);
+        _handCursor = LoadCursor(IntPtr.Zero, IdcHand);
         var wc = new WndClassEx
         {
             CbSize = (uint)Marshal.SizeOf<WndClassEx>(),
             LpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProcKeepAlive),
             HInstance = GetModuleHandle(null),
             LpszClassName = ClassName,
-            HCursor = IntPtr.Zero,
+            HCursor = _arrowCursor,
         };
         var atom = RegisterClassEx(ref wc);
         if (atom == 0)
@@ -315,6 +329,14 @@ public sealed class NativeOrbWindow : IDisposable
                     Present();
                 }
                 return IntPtr.Zero;
+
+            case WmSetCursor:
+                if ((int)(lParam.ToInt64() & 0xFFFF) == HtClient)
+                {
+                    SetCursor(_dragging ? _arrowCursor : _handCursor);
+                    return IntPtr.Zero;
+                }
+                break;
 
             case WmLButtonDown:
                 GetCursorPos(out _dragScreenStart);

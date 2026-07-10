@@ -53,6 +53,12 @@ public static class Loc
         ["history.empty_title"] = ("Ще немає збережених чатів", "No saved chats yet"),
         ["history.empty_hint"] = ("Почніть новий чат — він з'явиться тут", "Start a new chat — it will appear here"),
         ["history.msg_count"] = ("{0} · {1} повід.", "{0} · {1} msgs"),
+        ["history.delete"] = ("Видалити чат", "Delete chat"),
+        ["history.delete_title"] = ("Видалити чат?", "Delete chat?"),
+        ["history.delete_confirm"] = ("Видалити «{0}»? Цю дію не можна скасувати.", "Delete \"{0}\"? This cannot be undone."),
+        ["history.delete_btn"] = ("Видалити", "Delete"),
+        ["history.cancel"] = ("Скасувати", "Cancel"),
+        ["history.deleted"] = ("Чат видалено", "Chat deleted"),
 
         ["settings.title"] = ("Налаштування", "Settings"),
         ["settings.subtitle"] = ("Провайдер, тема, workspace", "Provider, theme, workspace"),

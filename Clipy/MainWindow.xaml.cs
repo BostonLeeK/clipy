@@ -43,6 +43,7 @@ public sealed partial class MainWindow : Window
     private readonly HotkeyService _hotkey = new();
     private readonly List<AttachmentItem> _attachments = new();
     private NativeOrbWindow? _orb;
+    private OrbBubbleWindow? _orbBubble;
     private CancellationTokenSource? _runCts;
     private bool _expanded;
     private bool _dragging;
@@ -64,6 +65,7 @@ public sealed partial class MainWindow : Window
     private NativePoint _resizeStartCursor;
     private int _resizeStartWidth;
     private int _resizeStartHeight;
+    private string? _pendingOrbSummary;
     private UpdateInfo? _pendingUpdate;
     private bool _checkingUpdate;
     private bool _installingUpdate;
@@ -124,6 +126,8 @@ public sealed partial class MainWindow : Window
             _hotkey.Dispose();
             _orb?.Dispose();
             _orb = null;
+            _orbBubble?.Dispose();
+            _orbBubble = null;
             _trayIcon?.Dispose();
             _trayIcon = null;
         };
@@ -534,9 +538,14 @@ public sealed partial class MainWindow : Window
             BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x55, accent.R, accent.G, accent.B)),
             BorderThickness = new Thickness(3, 1, 1, 1),
             CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(12, 10, 12, 10),
+            Padding = new Thickness(12, 10, 8, 10),
             Tag = session,
         };
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
         var col = new StackPanel { Spacing = 4 };
         col.Children.Add(new TextBlock
         {
@@ -568,17 +577,81 @@ public sealed partial class MainWindow : Window
             FontSize = 11,
             Foreground = new SolidColorBrush(theme.Muted),
         });
-        card.Child = col;
-        card.Tapped += (_, _) =>
+        Grid.SetColumn(col, 0);
+        grid.Children.Add(col);
+
+        var deleteBtn = new Button
         {
-            if (card.Tag is ChatSession s)
+            Style = (Style)Application.Current.Resources["IconButtonStyle"],
+            Width = 28,
+            Height = 28,
+            CornerRadius = new CornerRadius(14),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+            VerticalAlignment = VerticalAlignment.Top,
+            Content = new FontIcon
             {
-                LoadSession(s);
-                HistoryOverlay.Visibility = Visibility.Collapsed;
-                ShowChatScreen();
-            }
+                Glyph = "\uE74D",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(theme.Muted),
+            },
+        };
+        ToolTipService.SetToolTip(deleteBtn, Loc.Get("history.delete"));
+        deleteBtn.Click += async (_, _) => await ConfirmAndDeleteChatAsync(session);
+        Grid.SetColumn(deleteBtn, 1);
+        grid.Children.Add(deleteBtn);
+
+        card.Child = grid;
+        col.Tapped += (_, _) =>
+        {
+            LoadSession(session);
+            HistoryOverlay.Visibility = Visibility.Collapsed;
+            ShowChatScreen();
         };
         return card;
+    }
+
+    private async Task ConfirmAndDeleteChatAsync(ChatSession session)
+    {
+        var title = string.IsNullOrWhiteSpace(session.Title) ? Loc.Get("chat.new") : session.Title;
+        var dialog = new ContentDialog
+        {
+            Title = Loc.Get("history.delete_title"),
+            Content = new TextBlock
+            {
+                Text = Loc.Format("history.delete_confirm", title),
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = Loc.Get("history.delete_btn"),
+            CloseButtonText = Loc.Get("history.cancel"),
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return;
+
+        DeleteChat(session);
+    }
+
+    private void DeleteChat(ChatSession session)
+    {
+        _chatHistory.Delete(session.Id);
+
+        if (string.Equals(_currentSession?.Id, session.Id, StringComparison.Ordinal))
+        {
+            _currentSession = null;
+            _config.LocalSessionId = null;
+            _config.ChatId = null;
+            ChatPanel.Children.Clear();
+            _hasMessages = false;
+            _homeMode = true;
+            Save();
+            UpdateScreenLayout();
+        }
+
+        RefreshHomeHistoryList();
+        RefreshHistoryList();
+        FooterStatus.Text = Loc.Get("history.deleted");
     }
 
     private void RefreshHomeBackground()
@@ -847,6 +920,7 @@ public sealed partial class MainWindow : Window
         _orb.Moved += pos => DispatcherQueue.TryEnqueue(() =>
         {
             _orbPos = pos;
+            _orbBubble?.MoveNearOrb(_orbPos, WindowHelper.OrbSize);
             Save();
         });
     }
@@ -866,6 +940,7 @@ public sealed partial class MainWindow : Window
     private void ShowPanelMode()
     {
         _expanded = true;
+        _orbBubble?.Hide();
         _orb?.Hide();
 
         var panelPos = WindowHelper.PanelFromOrb(_orbPos, _panelWidth, _panelHeight);
@@ -900,6 +975,7 @@ public sealed partial class MainWindow : Window
         var panelPos = _appWindow.Position;
         _orbPos = WindowHelper.OrbFromPanel(panelPos, _panelWidth, _panelHeight);
         ShowOrbMode();
+        TryShowOrbBubble();
     }
 
     private void BeginDrag()
@@ -1208,6 +1284,8 @@ public sealed partial class MainWindow : Window
         EnsureSession().Messages.Add(new ChatMessage { Role = "user", Text = display });
         PersistSession(display);
         SetBusy(true);
+        HideOrbBubble();
+        _pendingOrbSummary = null;
         FooterStatus.Text = Loc.Get("status.thinking_short");
 
         _userCancelledRun = false;
@@ -1255,8 +1333,10 @@ public sealed partial class MainWindow : Window
 
         try
         {
+        var agentPrompt = string.IsNullOrEmpty(text) ? "Analyze the attached context." : text;
+        agentPrompt = OrbSummary.AugmentPrompt(agentPrompt);
         await _agent.RunPromptAsync(
-            string.IsNullOrEmpty(text) ? "Analyze the attached context." : text,
+            agentPrompt,
             s => ui.Enqueue(() =>
             {
                 FooterStatus.Text = s;
@@ -1310,9 +1390,16 @@ public sealed partial class MainWindow : Window
                             answerMarkdown = final;
                         else if (string.IsNullOrWhiteSpace(answerMarkdown))
                             answerMarkdown = "(порожня відповідь)";
+                        var (body, summary) = OrbSummary.Split(answerMarkdown);
+                        answerMarkdown = body;
                         RenderAnswer(answerMarkdown);
                         AppendAssistantHistory(answerMarkdown);
                         SetMascotState(MascotState.Success);
+                        if (!string.IsNullOrWhiteSpace(summary))
+                        {
+                            _pendingOrbSummary = summary;
+                            TryShowOrbBubble();
+                        }
                     }
                     else if (code != -1)
                     {
@@ -1528,6 +1615,27 @@ public sealed partial class MainWindow : Window
         SetMascotState(MascotState.Idle);
         FooterStatus.Text = Loc.Get("status.cancelled");
     }
+
+    private void TryShowOrbBubble()
+    {
+        if (_expanded || string.IsNullOrWhiteSpace(_pendingOrbSummary) || _orb is null)
+            return;
+        ShowOrbBubble(_pendingOrbSummary);
+    }
+
+    private void ShowOrbBubble(string summary)
+    {
+        if (_orb is null || string.IsNullOrWhiteSpace(summary)) return;
+        _orbBubble ??= new OrbBubbleWindow();
+        _orbBubble.Dismissed -= OnOrbBubbleDismissed;
+        _orbBubble.Dismissed += OnOrbBubbleDismissed;
+        _orbBubble.Show(summary, _orbPos, WindowHelper.OrbSize, _themes.Current);
+        _pendingOrbSummary = null;
+    }
+
+    private void OnOrbBubbleDismissed() => _pendingOrbSummary = null;
+
+    private void HideOrbBubble() => _orbBubble?.Hide();
 
     private void SetMascotState(MascotState state)
     {
@@ -1797,6 +1905,8 @@ public sealed partial class MainWindow : Window
             _hotkey.Dispose();
             _orb?.Dispose();
             _orb = null;
+            _orbBubble?.Dispose();
+            _orbBubble = null;
             _trayIcon?.Dispose();
             _trayIcon = null;
             Application.Current.Exit();
@@ -1896,6 +2006,8 @@ public sealed partial class MainWindow : Window
         UpdateScreenLayout();
         ClearAttachments();
         _config.ChatId = null;
+        _pendingOrbSummary = null;
+        HideOrbBubble();
         _currentSession = _chatHistory.CreateSession(_agent.Workspace);
         _currentSession.AgentProvider = _agent.ProviderId;
         _config.LocalSessionId = _currentSession.Id;
@@ -2184,6 +2296,8 @@ public sealed partial class MainWindow : Window
         _hotkey.Dispose();
         _orb?.Dispose();
         _orb = null;
+        _orbBubble?.Dispose();
+        _orbBubble = null;
         _trayIcon?.Dispose();
         _trayIcon = null;
         Application.Current.Exit();

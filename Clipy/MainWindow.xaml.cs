@@ -1666,7 +1666,7 @@ public sealed partial class MainWindow : Window
 
     private void RefreshUpdateSettingsUi()
     {
-        SettingsVersionText.Text = Loc.Format("settings.update.version", AppVersion.Current);
+        SettingsVersionText.Text = Loc.Format("settings.update.version", AppVersion.Display);
         SettingsInstallUpdateBtn.Visibility = _pendingUpdate is null
             ? Visibility.Collapsed
             : Visibility.Visible;

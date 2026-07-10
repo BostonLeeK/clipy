@@ -27,6 +27,7 @@ All notable changes to Clipy are documented in this file.
 
 ### Fixed
 
+- False “update available” prompt when already on the latest version (`1.1.0+build` semver parsing)
 - Grain Mono theme crash on switch (concurrent GDI+, blocking WebP load on UI thread)
 - Broken tray / app icon (gray circle placeholder)
 - Chat freeze when sending from home screen (previous release)

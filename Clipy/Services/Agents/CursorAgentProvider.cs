@@ -448,6 +448,9 @@ public sealed class CursorAgentProvider : IAgentProvider
 
         if (incomingIsFull)
         {
+            if (string.Equals(incoming, lastFull, StringComparison.Ordinal))
+                return new AgentStreamUpdate(null, lastFull, null, status);
+
             if (incoming.StartsWith(lastFull, StringComparison.Ordinal))
             {
                 var delta = incoming.Length > lastFull.Length ? incoming[lastFull.Length..] : null;
@@ -460,7 +463,7 @@ public sealed class CursorAgentProvider : IAgentProvider
             if (lastFull.EndsWith(incoming, StringComparison.Ordinal))
                 return new AgentStreamUpdate(null, lastFull, null, status);
 
-            return new AgentStreamUpdate(incoming, lastFull + incoming, null, status);
+            return new AgentStreamUpdate(null, incoming, null, status);
         }
 
         if (lastFull.EndsWith(incoming, StringComparison.Ordinal))

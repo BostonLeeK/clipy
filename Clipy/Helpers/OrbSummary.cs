@@ -8,6 +8,10 @@ public static class OrbSummary
         @"^Summary:\s*(.+)$",
         RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
 
+    private static readonly Regex FirstSentence = new(
+        @"^(.+?[.!?…])(?:\s+|$)",
+        RegexOptions.Compiled);
+
     public static string AugmentPrompt(string prompt) =>
         string.IsNullOrWhiteSpace(prompt)
             ? prompt
@@ -22,24 +26,65 @@ public static class OrbSummary
         var match = SummaryLine.Match(markdown);
         if (match.Success)
         {
-            var summary = CleanSummary(match.Groups[1].Value);
+            var summary = ForBubble(match.Groups[1].Value);
             var body = markdown[..match.Index].TrimEnd();
+            body = TrimSummaryEcho(body, summary);
             if (string.IsNullOrWhiteSpace(body))
                 body = summary;
             return (body, summary);
         }
 
-        var fallback = ExtractLastSentence(markdown);
-        return (markdown.Trim(), string.IsNullOrWhiteSpace(fallback) ? null : fallback);
+        var fallback = ForBubble(ExtractLastSentence(markdown));
+        var trimmedBody = TrimSummaryEcho(markdown.Trim(), fallback);
+        return (trimmedBody, string.IsNullOrWhiteSpace(fallback) ? null : fallback);
     }
 
-    private static string CleanSummary(string value)
+    public static string ForBubble(string? text)
     {
-        var text = value.Trim().TrimEnd('.', '!', '?', '…');
-        if (text.Length > 120)
-            text = text[..117] + "…";
-        return text;
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        var trimmed = text.Trim().Replace('\n', ' ');
+        while (trimmed.Contains("  ", StringComparison.Ordinal))
+            trimmed = trimmed.Replace("  ", " ", StringComparison.Ordinal);
+
+        var sentence = FirstSentence.Match(trimmed);
+        var core = sentence.Success ? sentence.Groups[1].Value.Trim() : trimmed;
+        return LimitWords(core, 15);
     }
+
+    private static string LimitWords(string text, int maxWords)
+    {
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (words.Length <= maxWords)
+            return text;
+        return string.Join(' ', words.Take(maxWords)) + "…";
+    }
+
+    private static string TrimSummaryEcho(string body, string? summary)
+    {
+        if (string.IsNullOrWhiteSpace(body) || string.IsNullOrWhiteSpace(summary))
+            return body;
+
+        var lines = body.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        while (lines.Count > 0 && IsSimilarLine(lines[^1], summary))
+            lines.RemoveAt(lines.Count - 1);
+        return string.Join('\n', lines).TrimEnd();
+    }
+
+    private static bool IsSimilarLine(string a, string b)
+    {
+        a = NormalizeLine(a);
+        b = NormalizeLine(b);
+        if (a.Length == 0 || b.Length == 0) return false;
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
+        if (a.Contains(b, StringComparison.OrdinalIgnoreCase) || b.Contains(a, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
+    private static string NormalizeLine(string value) =>
+        value.Trim().TrimEnd('.', '!', '?', '…');
 
     private static string ExtractLastSentence(string markdown)
     {
@@ -53,6 +98,7 @@ public static class OrbSummary
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(l => !l.StartsWith('#') && !l.StartsWith('-') && !l.StartsWith('>'))
             .Where(l => !IsThinkingLine(l))
+            .Where(l => !l.StartsWith("Summary:", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (lines.Count == 0)
@@ -61,7 +107,7 @@ public static class OrbSummary
         var last = lines[^1];
         if (last.Length > 140)
             last = last[..137] + "…";
-        return CleanSummary(last);
+        return last.Trim();
     }
 
     private static bool IsThinkingLine(string line)

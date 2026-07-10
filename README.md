@@ -1,13 +1,13 @@
 # Clipy
 
+<p align="center">
+  <img src="docs/mascot-grain.gif" alt="Clipy grain mascot" width="140">
+</p>
+
 Windows desktop assistant in the spirit of Clippy. Talks to AI agent CLIs from a floating mascot + chat panel — without opening the full IDE.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Clipy chat panel" width="380">
-</p>
-
-<p align="center">
-  <img src="docs/mascot-grain.gif" alt="Clipy grain mascot" width="140">
 </p>
 
 ## Features

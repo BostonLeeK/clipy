@@ -9,7 +9,9 @@ public sealed class GrainMascotRenderer : IMascotRenderer
 {
     private static readonly Dictionary<int, Bitmap> GrainOverlays = new();
 
-    public Bitmap Render(int size, double phase)
+    public Bitmap Render(int size, double phase) => Render(size, phase, true);
+
+    public Bitmap Render(int size, double phase, bool animateGrain)
     {
         var bmp = new Bitmap(size, size, PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(bmp);
@@ -35,7 +37,7 @@ public sealed class GrainMascotRenderer : IMascotRenderer
 
         DrawHalo(g, halo, cx, cy, pulse);
         DrawBody(g, blob, size, phase, pulse);
-        DrawGrain(g, blob, size, phase);
+        DrawGrain(g, blob, size, phase, animateGrain);
         DrawContours(g, blob, size, phase, pulse);
         DrawEye(g, cx, cy, baseR, size, phase);
         DrawSatellite(g, cx, cy, size, phase, pulse);
@@ -98,11 +100,11 @@ public sealed class GrainMascotRenderer : IMascotRenderer
         g.DrawPath(edge, blob);
     }
 
-    private static void DrawGrain(Graphics g, GraphicsPath blob, int size, double phase)
+    private static void DrawGrain(Graphics g, GraphicsPath blob, int size, double phase, bool animateGrain)
     {
         var overlay = GetGrainOverlay(size);
-        var shiftX = (int)(((phase * 11) % 1.0) * size * 0.1f);
-        var shiftY = (int)(((phase * 7) % 1.0) * size * 0.1f);
+        var shiftX = animateGrain ? (int)(((phase * 11) % 1.0) * size * 0.1f) : 0;
+        var shiftY = animateGrain ? (int)(((phase * 7) % 1.0) * size * 0.1f) : 0;
 
         var state = g.Save();
         g.SetClip(blob);

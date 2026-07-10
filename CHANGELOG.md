@@ -17,6 +17,9 @@ All notable changes to Clipy are documented in this file.
 - App icon generator (`generate-icons.ps1`, `tools/IconGen/`) and proper multi-size `clipy.ico`
 - GIF / WebP home-screen background players
 - `GdiRenderLock` and `SafeMascotRenderer` for stable mascot rendering across themes
+- Delete chat sessions from history with confirmation dialog
+- One-sentence summary bubble near the mascot when the panel is collapsed (`OrbSummary`, `OrbBubbleWindow`)
+- README showcase assets: app screenshot and animated Grain mascot GIF (`docs/`, `tools/MascotGifGen/`)
 
 ### Changed
 
@@ -24,6 +27,7 @@ All notable changes to Clipy are documented in this file.
 - Settings auth, status, and footer messages are provider-aware
 - Action button hover uses opacity-only styling (fixes white-on-white on Grain Mono)
 - Installer and release workflow use generated app icon
+- README expanded with feature list, screenshots, and mascot media
 
 ### Fixed
 
@@ -31,6 +35,9 @@ All notable changes to Clipy are documented in this file.
 - Grain Mono theme crash on switch (concurrent GDI+, blocking WebP load on UI thread)
 - Broken tray / app icon (gray circle placeholder)
 - Chat freeze when sending from home screen (previous release)
+- Orb hover cursor showing wait instead of hand pointer
+- Duplicate assistant text in chat and summary bubble after stream completion
+- Heavy GIF dithering and edge noise in README mascot animation (static grain overlay, opaque background, global palette without dither)
 
 ## [1.0.0] - 2026-07-09
 

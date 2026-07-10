@@ -361,8 +361,17 @@ public sealed class NativeOrbWindow : IDisposable
     private void Present()
     {
         if (_hwnd == IntPtr.Zero) return;
-        using var bitmap = _renderer.Render(_size, _phase);
-        PresentBitmap(_hwnd, bitmap);
+        try
+        {
+            lock (GdiRenderLock.Sync)
+            {
+                using var bitmap = _renderer.Render(_size, _phase);
+                PresentBitmap(_hwnd, bitmap);
+            }
+        }
+        catch
+        {
+        }
     }
 
     private static void PresentBitmap(IntPtr hwnd, Bitmap bitmap)

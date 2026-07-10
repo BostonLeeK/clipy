@@ -36,6 +36,61 @@
             <Style x:Key="ActionButtonStyle" TargetType="Button">
                 <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="UseSystemFocusVisuals" Value="False" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="RootBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{TemplateBinding CornerRadius}"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter x:Name="Content"
+                                                  Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  Foreground="{TemplateBinding Foreground}"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="RootBorder"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="1" Duration="0:0:0.05" />
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="PointerOver">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="RootBorder"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.84" Duration="0:0:0.05" />
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="RootBorder"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.68" Duration="0:0:0.05" />
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="RootBorder"
+                                                                 Storyboard.TargetProperty="Opacity"
+                                                                 To="0.45" Duration="0:0:0" />
+                                            </Storyboard>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
             </Style>
         </ResourceDictionary>
     </Application.Resources>

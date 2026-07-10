@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Clipy.Localization;
 
 namespace Clipy.Models;
 
@@ -8,10 +9,13 @@ public sealed class ChatSession
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     [JsonPropertyName("title")]
-    public string Title { get; set; } = "Новий чат";
+    public string Title { get; set; } = "";
 
     [JsonPropertyName("agent_chat_id")]
     public string? AgentChatId { get; set; }
+
+    [JsonPropertyName("agent_provider")]
+    public string? AgentProvider { get; set; }
 
     [JsonPropertyName("workspace")]
     public string Workspace { get; set; } = "";

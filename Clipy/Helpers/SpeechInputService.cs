@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Speech.Recognition;
+using Clipy.Localization;
 using Windows.Globalization;
 using Windows.Media.Capture;
 using Windows.Media.SpeechRecognition;
@@ -20,7 +21,7 @@ public sealed class SpeechInputService
             {
                 return new SpeechRecognitionOutcome(
                     null,
-                    "Дозволь мікрофон: Параметри → Конфіденційність → Мікрофон → Clipy");
+                    Loc.Get("speech.mic_permission"));
             }
 
             var winRt = await TryWinRtAsync();
@@ -33,7 +34,7 @@ public sealed class SpeechInputService
 
             return new SpeechRecognitionOutcome(
                 null,
-                "Не вдалося запустити розпізнавання. Перевір: Параметри → Час і мова → Мовлення → український пакет");
+                Loc.Get("speech.start_failed"));
         }
         catch (Exception ex)
         {
@@ -88,7 +89,7 @@ public sealed class SpeechInputService
         {
             return new SpeechRecognitionOutcome(
                 null,
-                "Увімкни онлайн-розпізнавання: Параметри → Конфіденційність → Мовлення");
+                Loc.Get("speech.online_required"));
         }
 
         return null;
@@ -246,22 +247,18 @@ public sealed class SpeechInputService
     private static string DescribeStatus(SpeechRecognitionResultStatus status) =>
         status switch
         {
-            SpeechRecognitionResultStatus.TimeoutExceeded => "Не почув голос — спробуй ще раз",
-            SpeechRecognitionResultStatus.MicrophoneUnavailable =>
-                "Мікрофон недоступний. Перевір підключення та дозволи",
-            SpeechRecognitionResultStatus.NetworkFailure =>
-                "Увімкни онлайн-розпізнавання: Параметри → Конфіденційність → Мовлення",
-            SpeechRecognitionResultStatus.PauseLimitExceeded => "Занадто довга пауза — спробуй ще раз",
-            _ => "Голос не розпізнано. Перевір мікрофон і мовлення в Параметрах Windows",
+            SpeechRecognitionResultStatus.TimeoutExceeded => Loc.Get("speech.timeout"),
+            SpeechRecognitionResultStatus.MicrophoneUnavailable => Loc.Get("speech.mic_unavailable"),
+            SpeechRecognitionResultStatus.NetworkFailure => Loc.Get("speech.online_required"),
+            SpeechRecognitionResultStatus.PauseLimitExceeded => Loc.Get("speech.pause_limit"),
+            _ => Loc.Get("speech.not_recognized"),
         };
 
     private static string ShortError(Exception ex) =>
         ex.HResult switch
         {
-            unchecked((int)0x80045509) =>
-                "Увімкни онлайн-розпізнавання: Параметри → Конфіденційність → Мовлення",
-            unchecked((int)0x80070005) =>
-                "Дозволь мікрофон у Параметрах Windows",
+            unchecked((int)0x80045509) => Loc.Get("speech.online_required"),
+            unchecked((int)0x80070005) => Loc.Get("speech.mic_denied"),
             _ => ex.Message,
         };
 }

@@ -16,30 +16,10 @@ $versionFile = Join-Path $root "version.txt"
 
 function Ensure-InstallerIcon {
     $iconPath = Join-Path $installerDir "clipy.ico"
-    if (Test-Path $iconPath) { return $iconPath }
-
-    Add-Type -AssemblyName System.Drawing
-    $size = 256
-    $bmp = New-Object System.Drawing.Bitmap $size, $size
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.Clear([System.Drawing.Color]::FromArgb(0, 0, 0, 0))
-    $rect = New-Object System.Drawing.Rectangle 20, 20, 216, 216
-    $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-        $rect,
-        [System.Drawing.Color]::FromArgb(255, 200, 255, 77),
-        [System.Drawing.Color]::FromArgb(255, 139, 124, 246),
-        45)
-    $g.FillEllipse($brush, $rect)
-    $g.FillEllipse(
-        (New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(120, 255, 255, 255))),
-        70, 70, 50, 50)
-    $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
-    $stream = [System.IO.File]::Create($iconPath)
-    $icon.Save($stream)
-    $stream.Close()
-    $g.Dispose()
-    $bmp.Dispose()
+    $generator = Join-Path $root "generate-icons.ps1"
+    if (-not (Test-Path $generator)) { throw "generate-icons.ps1 not found" }
+    & $generator
+    if (-not (Test-Path $iconPath)) { throw "Icon generation failed: $iconPath" }
     return $iconPath
 }
 

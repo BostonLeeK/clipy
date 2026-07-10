@@ -52,27 +52,7 @@ jobs:
 
       - name: Generate installer icon
         shell: pwsh
-        run: |
-          $iconPath = "installer/clipy.ico"
-          if (-not (Test-Path $iconPath)) {
-            Add-Type -AssemblyName System.Drawing
-            $size = 256
-            $bmp = New-Object System.Drawing.Bitmap $size, $size
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-            $g.Clear([System.Drawing.Color]::FromArgb(0, 0, 0, 0))
-            $rect = New-Object System.Drawing.Rectangle 20, 20, 216, 216
-            $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-              $rect,
-              [System.Drawing.Color]::FromArgb(255, 200, 255, 77),
-              [System.Drawing.Color]::FromArgb(255, 139, 124, 246),
-              45)
-            $g.FillEllipse($brush, $rect)
-            $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
-            $stream = [System.IO.File]::Create($iconPath)
-            $icon.Save($stream)
-            $stream.Close()
-          }
+        run: ./generate-icons.ps1
 
       - name: Build installer
         shell: pwsh

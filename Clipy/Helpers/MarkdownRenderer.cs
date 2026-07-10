@@ -6,6 +6,8 @@ using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI.Text;
 
+using Clipy.Localization;
+
 namespace Clipy.Helpers;
 
 public static class MarkdownRenderer
@@ -139,7 +141,7 @@ public static class MarkdownRenderer
 
         var copy = new Button
         {
-            Content = "Копіювати",
+            Content = Loc.Get("chat.copy"),
             FontSize = 10,
             Padding = new Thickness(8, 2, 8, 2),
             MinHeight = 0,

@@ -2,7 +2,9 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
-namespace Clipy.Themes;
+using Clipy.Themes;
+
+namespace Clipy.Themes.Packs.Totoro;
 
 public sealed class KawaiiMascotRenderer : IMascotRenderer
 {

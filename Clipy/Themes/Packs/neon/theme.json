@@ -1,0 +1,28 @@
+{
+  "id": "default",
+  "name": "Clipy Neon",
+  "author": "boston",
+  "version": "1.0.0",
+  "description": {
+    "uk": "Темна тема з лаймовим акцентом",
+    "en": "Dark theme with lime accent"
+  },
+  "mascot": "neon",
+  "emptyIcon": "💬",
+  "onAccent": "#0B0B0F",
+  "home": {
+    "background": "assets/home-bg.webp",
+    "opacity": 0.48
+  },
+  "colors": {
+    "accent": "#C8FF4D",
+    "background": "#0C0C12",
+    "card": "#1A1A22",
+    "border": "#2A2A35",
+    "text": "#F0F0F5",
+    "muted": "#8A8A9A",
+    "frameStart": "#A8C8FF4D",
+    "frameMid": "#332A2A35",
+    "frameEnd": "#88A8C8FF"
+  }
+}

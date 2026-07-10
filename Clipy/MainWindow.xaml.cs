@@ -1,9 +1,12 @@
 using System.Drawing.Imaging;
+using Bitmap = System.Drawing.Bitmap;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Clipy.Helpers;
+using Clipy.Localization;
 using Clipy.Models;
 using Clipy.Services;
+using Clipy.Services.Agents;
 using Clipy.Themes;
 using H.NotifyIcon;
 using Microsoft.UI.Dispatching;
@@ -31,8 +34,11 @@ public sealed partial class MainWindow : Window
     private readonly AgentService _agent;
     private readonly ThemeService _themes = new();
     private readonly ChatHistoryService _chatHistory = new();
+    private readonly UpdateService _updates = new();
     private readonly SpeechInputService _speech = new();
     private readonly TaskbarIcon _tray = new() { ToolTipText = "Clipy" };
+    private NativeTrayMenuService? _trayMenu;
+    private XamlUICommand? _trayOpenMenuCommand;
     private System.Drawing.Icon? _trayIcon;
     private readonly HotkeyService _hotkey = new();
     private readonly List<AttachmentItem> _attachments = new();
@@ -48,8 +54,22 @@ public sealed partial class MainWindow : Window
     private PointInt32 _orbPos;
     private ChatSession? _currentSession;
     private DispatcherTimer? _mascotResetTimer;
+    private bool _loadingLanguage;
     private bool _loadingMode;
+    private bool _loadingProvider;
     private bool _loadingRecentWorkspace;
+    private int _panelWidth;
+    private int _panelHeight;
+    private bool _resizing;
+    private NativePoint _resizeStartCursor;
+    private int _resizeStartWidth;
+    private int _resizeStartHeight;
+    private UpdateInfo? _pendingUpdate;
+    private bool _checkingUpdate;
+    private bool _installingUpdate;
+    private IHomeBackgroundPlayer? _homeBackgroundPlayer;
+    private bool _homeBackgroundLoading;
+    private int _homeBackgroundGeneration;
 
     private static Mutex? _mutex;
     private FileSystemWatcher? _signalWatcher;
@@ -66,7 +86,7 @@ public sealed partial class MainWindow : Window
         if (!created)
         {
             SignalExisting();
-            MessageBox(IntPtr.Zero, "Clipy вже працює.", "Clipy", 0x40);
+            MessageBox(IntPtr.Zero, Loc.Get("app.already_running"), "Clipy", 0x40);
             Environment.Exit(0);
             return;
         }
@@ -75,6 +95,10 @@ public sealed partial class MainWindow : Window
         Title = "";
 
         _config = _configService.Load();
+        Loc.Set(_config.Language);
+        Loc.Changed += () => DispatcherQueue.TryEnqueue(ApplyLocalization);
+        _panelWidth = _config.PanelWidth ?? WindowHelper.DefaultPanelWidth;
+        _panelHeight = _config.PanelHeight ?? WindowHelper.DefaultPanelHeight;
         _agent = new AgentService(_config);
         _expanded = false;
         _themes.Apply(_config.ThemeId);
@@ -95,6 +119,8 @@ public sealed partial class MainWindow : Window
         InputBox.ScreenshotRequested += (_, _) => CaptureScreenshot();
         Closed += (_, _) =>
         {
+            _homeBackgroundPlayer?.Dispose();
+            _homeBackgroundPlayer = null;
             _hotkey.Dispose();
             _orb?.Dispose();
             _orb = null;
@@ -109,34 +135,47 @@ public sealed partial class MainWindow : Window
         }
         catch
         {
-            FooterStatus.Text = "Хоткей Ctrl+Shift+C зайнятий";
+            FooterStatus.Text = Loc.Get("hotkey.busy");
         }
 
         _ = RefreshStatusAsync();
         SetupTray();
         SetupSignalWatcher();
         RefreshThemeCards();
+        ApplyLocalization();
         ApplyPanelChromeColors();
         RefreshHeaderAvatar();
         RefreshFrameDecor();
         UpdateScreenLayout();
         SelectModeInSettings();
+        SelectLanguageInSettings();
+        PopulateProviderCombo();
+        SelectProviderInSettings();
         RefreshRecentWorkspaces();
         RestoreSessionIfAny();
         UpdateScreenLayout();
+        RefreshUpdateSettingsUi();
+        _ = CheckForUpdatesOnStartupAsync();
     }
 
     private void OnThemeChanged()
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            _orb?.SetRenderer(_themes.CurrentRenderer);
-            ApplyPanelChromeColors();
-            RefreshHeaderAvatar();
-            RefreshFrameDecor();
-            RefreshThemeCards();
-            UpdateScreenLayout();
-            RefreshTrayIcon();
+            try
+            {
+                _orb?.SetRenderer(_themes.CurrentRenderer);
+                ApplyPanelChromeColors();
+                RefreshHeaderAvatar();
+                RefreshFrameDecor();
+                RefreshHomeBackground();
+                RefreshThemeCards();
+                RefreshTrayIcon();
+                UpdateScreenLayout();
+            }
+            catch
+            {
+            }
         });
     }
 
@@ -144,23 +183,142 @@ public sealed partial class MainWindow : Window
     {
         _homeMode = true;
         UpdateScreenLayout();
+        RefreshHomeHistoryList();
     }
 
     private void ShowChatScreen()
     {
         _homeMode = false;
         UpdateScreenLayout();
-        ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null);
+        RefreshChatLayout();
+        ScrollChatToBottom();
+    }
+
+    private void ScrollChatToBottom()
+    {
+        if (ChatScroll.Visibility != Visibility.Visible)
+            return;
+
+        void ScrollNow()
+        {
+            ChatPanel.UpdateLayout();
+            ChatScroll.UpdateLayout();
+            var offset = ChatScroll.ScrollableHeight + 80;
+            if (offset > 0)
+                ChatScroll.ChangeView(null, offset, null, true);
+        }
+
+        DispatcherQueue.TryEnqueue(ScrollNow);
+        DispatcherQueue.TryEnqueue(ScrollNow);
     }
 
     private void UpdateScreenLayout()
     {
         var onHome = (_homeMode || !_hasMessages) && !_busy;
-        GreetingCard.Visibility = onHome ? Visibility.Visible : Visibility.Collapsed;
-        QuickActions.Visibility = onHome ? Visibility.Visible : Visibility.Collapsed;
+        HomePanel.Visibility = onHome ? Visibility.Visible : Visibility.Collapsed;
         ChatScroll.Visibility = onHome ? Visibility.Collapsed : Visibility.Visible;
         OpenChatBtn.Visibility = onHome && _hasMessages ? Visibility.Visible : Visibility.Collapsed;
         HomeBtn.Visibility = _hasMessages && !onHome ? Visibility.Visible : Visibility.Collapsed;
+        if (onHome)
+        {
+            RefreshHomeHistoryList();
+            EnsureHomeBackground();
+            if (_homeBackgroundPlayer is not null)
+                _homeBackgroundPlayer.Start();
+        }
+        else
+            _homeBackgroundPlayer?.Stop();
+    }
+
+    private void ApplyLocalization()
+    {
+        ToolTipService.SetToolTip(HomeBtn, Loc.Get("home.tooltip"));
+        GreetingText.Text = Loc.Get("home.greeting");
+        NewChatBtn.Content = Loc.Get("home.new_chat");
+        OpenChatBtn.Content = Loc.Get("home.chat");
+        FolderBtn.Content = Loc.Get("home.folder");
+        HomeHistoryTitle.Text = Loc.Get("home.recent");
+        HomeHistoryEmptyTitle.Text = Loc.Get("home.empty_title");
+        HomeHistoryEmptyHint.Text = Loc.Get("home.empty_hint");
+
+        ToolTipService.SetToolTip(AttachFileBtn, Loc.Get("input.attach"));
+        ToolTipService.SetToolTip(ScreenshotBtn, Loc.Get("input.screenshot"));
+        ToolTipService.SetToolTip(VoiceBtn, Loc.Get("input.voice"));
+        InputBox.PlaceholderText = Loc.Get("input.placeholder");
+        FooterStatus.Text = Loc.Get("footer.hint");
+        ToolTipService.SetToolTip(ResizeGrip, Loc.Get("resize.tooltip"));
+
+        HistoryTitleText.Text = Loc.Get("history.title");
+        HistorySubtitleText.Text = Loc.Get("history.subtitle");
+        HistoryEmptyTitle.Text = Loc.Get("history.empty_title");
+        HistoryEmptyHint.Text = Loc.Get("history.empty_hint");
+
+        SettingsTitleText.Text = Loc.Get("settings.title");
+        SettingsSubtitleText.Text = Loc.Get("settings.subtitle");
+        SettingsProviderTitle.Text = Loc.Get("settings.provider.title");
+        RefreshProviderComboLabels();
+        ApplyProviderSettingsUi();
+        SettingsLogoutBtn.Content = Loc.Get("settings.auth.logout");
+        SettingsModeTitle.Text = Loc.Get("settings.mode.title");
+        SettingsModelTitle.Text = Loc.Get("settings.model.title");
+        SettingsModelHint.Text = Loc.Get("settings.model.hint");
+        SettingsWorkspaceTitle.Text = Loc.Get("settings.workspace.title");
+        SettingsFolderBtn.Content = Loc.Get("settings.workspace.change");
+        SettingsLanguageTitle.Text = Loc.Get("settings.language.title");
+        SettingsThemesTitle.Text = Loc.Get("settings.themes.title");
+        SettingsThemesHint.Text = Loc.Get("settings.themes.hint");
+        SettingsUpdateTitle.Text = Loc.Get("settings.update.title");
+        SettingsCheckUpdateBtn.Content = Loc.Get("settings.update.check_btn");
+        SettingsInstallUpdateBtn.Content = Loc.Get("settings.update.install_btn");
+
+        if (SettingsLanguageCombo.Items.Count >= 2)
+        {
+            ((ComboBoxItem)SettingsLanguageCombo.Items[0]).Content = Loc.Get("settings.language.uk");
+            ((ComboBoxItem)SettingsLanguageCombo.Items[1]).Content = Loc.Get("settings.language.en");
+        }
+
+        if (SettingsModeCombo.Items.Count >= 3)
+        {
+            ((ComboBoxItem)SettingsModeCombo.Items[0]).Content = Loc.Get("settings.mode.agent");
+            ((ComboBoxItem)SettingsModeCombo.Items[1]).Content = Loc.Get("settings.mode.ask");
+            ((ComboBoxItem)SettingsModeCombo.Items[2]).Content = Loc.Get("settings.mode.plan");
+        }
+
+        if (!_busy)
+            StatusText.Text = Loc.Get("status.online");
+
+        RefreshThemeCards();
+        RefreshHomeHistoryList();
+        RefreshTrayMenu();
+        _ = UpdateSettingsAuthUiAsync();
+        RefreshUpdateSettingsUi();
+    }
+
+    private void SelectLanguageInSettings()
+    {
+        _loadingLanguage = true;
+        var lang = string.Equals(_config.Language, Loc.En, StringComparison.OrdinalIgnoreCase) ? Loc.En : Loc.Uk;
+        for (var i = 0; i < SettingsLanguageCombo.Items.Count; i++)
+        {
+            if (SettingsLanguageCombo.Items[i] is ComboBoxItem item
+                && string.Equals(item.Tag as string, lang, StringComparison.OrdinalIgnoreCase))
+            {
+                SettingsLanguageCombo.SelectedIndex = i;
+                break;
+            }
+        }
+        _loadingLanguage = false;
+    }
+
+    private void SettingsLanguage_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingLanguage) return;
+        if (SettingsLanguageCombo.SelectedItem is not ComboBoxItem item) return;
+        var lang = item.Tag as string;
+        if (string.IsNullOrWhiteSpace(lang)) return;
+        _config.Language = lang;
+        Loc.Set(lang);
+        Save();
     }
 
     private void Home_Click(object sender, RoutedEventArgs e) => ShowHomeScreen();
@@ -170,6 +328,7 @@ public sealed partial class MainWindow : Window
     private void ApplyPanelChromeColors()
     {
         var theme = _themes.Current;
+        var pack = _themes.CurrentPack;
         var accent = new SolidColorBrush(theme.Accent);
         var card = new SolidColorBrush(theme.Card);
         var text = new SolidColorBrush(theme.Text);
@@ -178,7 +337,7 @@ public sealed partial class MainWindow : Window
         var border = new SolidColorBrush(theme.Border);
         var subtleBorder = ThemeSubtleBorder(theme);
         var inputBg = ThemeInputBackground(theme);
-        var onAccent = ThemeOnAccent(theme);
+        var onAccent = new SolidColorBrush(pack.OnAccentColor);
 
         PanelView.Background = bg;
         PanelView.BorderBrush = subtleBorder;
@@ -189,6 +348,8 @@ public sealed partial class MainWindow : Window
         StatusText.Foreground = muted;
         FooterStatus.Foreground = muted;
         WorkspaceText.Foreground = muted;
+        ResizeGripIcon.Foreground = accent;
+        ResizeGrip.Background = card;
         InputBox.Background = inputBg;
         InputBox.Foreground = text;
         InputBox.BorderBrush = border;
@@ -196,11 +357,14 @@ public sealed partial class MainWindow : Window
         ApplyOverlayHeader(HistoryTitleText, HistorySubtitleText, HistoryBackBtn, text, muted, card, accent);
         ApplyOverlayHeader(SettingsTitleText, SettingsSubtitleText, SettingsBackBtn, text, muted, card, accent);
 
+        StyleSettingsCard(SettingsProviderCard, text, muted, card, subtleBorder);
         StyleSettingsCard(SettingsAuthCard, text, muted, card, subtleBorder);
         StyleSettingsCard(SettingsModeCard, text, muted, card, subtleBorder);
         StyleSettingsCard(SettingsModelCard, text, muted, card, subtleBorder);
         StyleSettingsCard(SettingsWorkspaceCard, text, muted, card, subtleBorder);
+        StyleSettingsCard(SettingsLanguageCard, text, muted, card, subtleBorder);
         StyleSettingsCard(SettingsThemesCard, text, muted, card, subtleBorder);
+        StyleSettingsCard(SettingsUpdateCard, text, muted, card, subtleBorder);
 
         SettingsAuthStatus.Foreground = muted;
         SettingsWorkspaceText.Foreground = muted;
@@ -210,13 +374,13 @@ public sealed partial class MainWindow : Window
         SettingsLogoutBtn.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0x8A, 0x8A));
         SettingsFolderBtn.Background = card;
         SettingsFolderBtn.Foreground = text;
+        StyleComboBox(SettingsLanguageCombo, card, text, border);
+        StyleComboBox(SettingsProviderCombo, card, text, border);
         StyleComboBox(SettingsModeCombo, card, text, border);
         StyleComboBox(SettingsModelCombo, card, text, border);
         StyleComboBox(SettingsRecentWorkspaceCombo, card, text, border);
 
-        HistoryEmptyIcon.Text = string.Equals(theme.Id, ThemeIds.Kawaii, StringComparison.OrdinalIgnoreCase)
-            ? "🌿"
-            : "💬";
+        HistoryEmptyIcon.Text = pack.Manifest.EmptyIcon;
         HistoryEmptyCard.Background = card;
         HistoryEmptyCard.BorderBrush = subtleBorder;
         HistoryEmptyTitle.Foreground = text;
@@ -232,10 +396,40 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        GreetingCard.Background = card;
+        GreetingCard.Background = ThemeGlassCard(theme);
         GreetingCard.BorderBrush = subtleBorder;
         if (GreetingCard.Child is TextBlock greet)
             greet.Foreground = text;
+
+        HomeHistoryTitle.Foreground = text;
+        HomeHistoryEmptyIcon.Text = pack.Manifest.EmptyIcon;
+        HomeHistoryEmptyCard.Background = ThemeGlassCard(theme);
+        HomeHistoryEmptyCard.BorderBrush = subtleBorder;
+        HomeHistoryEmptyTitle.Foreground = text;
+        HomeHistoryEmptyHint.Foreground = muted;
+        HomeBgOverlay.Background = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0),
+            EndPoint = new Windows.Foundation.Point(0, 1),
+            GradientStops =
+            {
+                new GradientStop
+                {
+                    Color = Windows.UI.Color.FromArgb(0xCC, theme.Background.R, theme.Background.G, theme.Background.B),
+                    Offset = 0,
+                },
+                new GradientStop
+                {
+                    Color = Windows.UI.Color.FromArgb(0x55, theme.Background.R, theme.Background.G, theme.Background.B),
+                    Offset = 0.5,
+                },
+                new GradientStop
+                {
+                    Color = Windows.UI.Color.FromArgb(0xEE, theme.Background.R, theme.Background.G, theme.Background.B),
+                    Offset = 1,
+                },
+            },
+        };
 
         foreach (var child in QuickActions.Children)
         {
@@ -254,9 +448,10 @@ public sealed partial class MainWindow : Window
         }
 
         if (!_busy)
+        {
             SendButton.Background = accent;
-
-        UpdateScreenLayout();
+            SendIcon.Foreground = onAccent;
+        }
     }
 
     private static void ApplyOverlayHeader(
@@ -316,10 +511,8 @@ public sealed partial class MainWindow : Window
             (byte)((bg.B + card.B) / 2)));
     }
 
-    private static SolidColorBrush ThemeOnAccent(ThemePalette theme) =>
-        string.Equals(theme.Id, ThemeIds.Kawaii, StringComparison.OrdinalIgnoreCase)
-            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x12, 0x18, 0x10))
-            : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x0B, 0x0B, 0x0F));
+    private static SolidColorBrush ThemeGlassCard(ThemePalette theme) =>
+        new(Windows.UI.Color.FromArgb(0xD0, theme.Card.R, theme.Card.G, theme.Card.B));
 
     private static SolidColorBrush ThemeLogoutBackground(ThemePalette theme)
     {
@@ -337,7 +530,7 @@ public sealed partial class MainWindow : Window
         var accent = theme.Accent;
         var card = new Border
         {
-            Background = new SolidColorBrush(theme.Card),
+            Background = ThemeGlassCard(theme),
             BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x55, accent.R, accent.G, accent.B)),
             BorderThickness = new Thickness(3, 1, 1, 1),
             CornerRadius = new CornerRadius(12),
@@ -352,9 +545,26 @@ public sealed partial class MainWindow : Window
             Foreground = new SolidColorBrush(theme.Text),
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
+        var preview = session.Messages.LastOrDefault(m => m.Role == "user")?.Text
+            ?? session.Messages.LastOrDefault()?.Text
+            ?? "";
+        preview = preview.Replace('\n', ' ').Trim();
+        if (preview.Length > 72) preview = preview[..69] + "…";
+        if (!string.IsNullOrWhiteSpace(preview))
+        {
+            col.Children.Add(new TextBlock
+            {
+                Text = preview,
+                FontSize = 11,
+                Foreground = new SolidColorBrush(theme.Muted),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 2,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
         col.Children.Add(new TextBlock
         {
-            Text = $"{session.UpdatedAt.ToLocalTime():g} · {session.Messages.Count} повід.",
+            Text = Loc.Format("history.msg_count", session.UpdatedAt.ToLocalTime().ToString("g"), session.Messages.Count),
             FontSize = 11,
             Foreground = new SolidColorBrush(theme.Muted),
         });
@@ -365,24 +575,127 @@ public sealed partial class MainWindow : Window
             {
                 LoadSession(s);
                 HistoryOverlay.Visibility = Visibility.Collapsed;
+                ShowChatScreen();
             }
         };
         return card;
+    }
+
+    private void RefreshHomeBackground()
+    {
+        _homeBackgroundGeneration++;
+        _homeBackgroundLoading = false;
+        _homeBackgroundPlayer?.Dispose();
+        _homeBackgroundPlayer = null;
+        HomeBgGif.Visibility = Visibility.Collapsed;
+        HomeBgGif.Source = null;
+    }
+
+    private void EnsureHomeBackground()
+    {
+        if (_homeBackgroundPlayer is not null || _homeBackgroundLoading) return;
+
+        var pack = _themes.CurrentPack;
+        var path = pack.HomeBackgroundPath;
+        if (path is null) return;
+
+        HomeBgGif.Opacity = pack.HomeBackgroundOpacity;
+
+        if (GifBackgroundPlayer.CanPlay(path))
+        {
+            try
+            {
+                HomeBgGif.Visibility = Visibility.Visible;
+                _homeBackgroundPlayer = new GifBackgroundPlayer(HomeBgGif, path, DispatcherQueue);
+            }
+            catch
+            {
+                HomeBgGif.Visibility = Visibility.Collapsed;
+                HomeBgGif.Source = null;
+            }
+
+            return;
+        }
+
+        if (!HomeBackgroundFiles.IsWebp(path))
+            return;
+
+        var generation = _homeBackgroundGeneration;
+        _homeBackgroundLoading = true;
+        HomeBgGif.Visibility = Visibility.Visible;
+
+        _ = Task.Run(() => WebpBackgroundPlayer.LoadImage(path)).ContinueWith(t =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _homeBackgroundLoading = false;
+                if (generation != _homeBackgroundGeneration)
+                {
+                    t.Result?.Dispose();
+                    return;
+                }
+
+                if (t.IsFaulted || t.Result is null)
+                {
+                    HomeBgGif.Visibility = Visibility.Collapsed;
+                    HomeBgGif.Source = null;
+                    return;
+                }
+
+                _homeBackgroundPlayer = WebpBackgroundPlayer.TryCreate(HomeBgGif, t.Result, DispatcherQueue);
+                if (_homeBackgroundPlayer is null)
+                {
+                    t.Result.Dispose();
+                    HomeBgGif.Visibility = Visibility.Collapsed;
+                    HomeBgGif.Source = null;
+                    return;
+                }
+
+                if (ShouldPlayHomeBackground())
+                    _homeBackgroundPlayer.Start();
+            });
+        });
+    }
+
+    private bool ShouldPlayHomeBackground() =>
+        (_homeMode || !_hasMessages) && !_busy;
+
+    private void RefreshHomeHistoryList() => PopulateHistoryList(HomeHistoryPanel, HomeHistoryEmptyCard);
+
+    private void RefreshHistoryList() => PopulateHistoryList(HistoryPanel, HistoryEmptyCard);
+
+    private void PopulateHistoryList(StackPanel panel, Border emptyCard)
+    {
+        panel.Children.Clear();
+        foreach (var session in _chatHistory.List())
+            panel.Children.Add(MakeHistorySessionCard(session));
+
+        var hasItems = panel.Children.Count > 0;
+        emptyCard.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
+        panel.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void RefreshHeaderAvatar()
     {
         try
         {
-            using var bmp = _themes.CurrentRenderer.Render(64, 1.15);
-            using var ms = new MemoryStream();
-            bmp.Save(ms, ImageFormat.Png);
-            ms.Position = 0;
-            var image = new BitmapImage();
-            image.SetSource(ms.AsRandomAccessStream());
-            HeaderAvatarImage.Source = image;
-            HistoryAvatarImage.Source = image;
-            SettingsAvatarImage.Source = image;
+            Bitmap bmp;
+            lock (GdiRenderLock.Sync)
+            {
+                bmp = _themes.CurrentRenderer.Render(64, 1.15);
+            }
+
+            using (bmp)
+            using (var ms = new MemoryStream())
+            {
+                bmp.Save(ms, ImageFormat.Png);
+                ms.Position = 0;
+                var image = new BitmapImage();
+                image.SetSource(ms.AsRandomAccessStream());
+                HeaderAvatarImage.Source = image;
+                HistoryAvatarImage.Source = image;
+                SettingsAvatarImage.Source = image;
+            }
         }
         catch
         {
@@ -394,7 +707,8 @@ public sealed partial class MainWindow : Window
 
     private void RefreshFrameDecor()
     {
-        if (!string.Equals(_themes.Current.Id, ThemeIds.Kawaii, StringComparison.OrdinalIgnoreCase))
+        var frame = _themes.CurrentPack.Frame;
+        if (frame is null)
         {
             FrameDecorImage.Source = null;
             FrameDecorImage.Visibility = Visibility.Collapsed;
@@ -403,14 +717,22 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            using var bmp = TotoroFrameDecorator.Render(WindowHelper.PanelWidth, WindowHelper.PanelHeight);
-            using var ms = new MemoryStream();
-            bmp.Save(ms, ImageFormat.Png);
-            ms.Position = 0;
-            var image = new BitmapImage();
-            image.SetSource(ms.AsRandomAccessStream());
-            FrameDecorImage.Source = image;
-            FrameDecorImage.Visibility = Visibility.Visible;
+            Bitmap bmp;
+            lock (GdiRenderLock.Sync)
+            {
+                bmp = frame.Render(_panelWidth, _panelHeight);
+            }
+
+            using (bmp)
+            using (var ms = new MemoryStream())
+            {
+                bmp.Save(ms, ImageFormat.Png);
+                ms.Position = 0;
+                var image = new BitmapImage();
+                image.SetSource(ms.AsRandomAccessStream());
+                FrameDecorImage.Source = image;
+                FrameDecorImage.Visibility = Visibility.Visible;
+            }
         }
         catch
         {
@@ -422,9 +744,10 @@ public sealed partial class MainWindow : Window
     private void RefreshThemeCards()
     {
         ThemesPanel.Children.Clear();
-        foreach (var theme in _themes.All)
+        foreach (var pack in _themes.All)
         {
-            var selected = string.Equals(theme.Id, _themes.Current.Id, StringComparison.OrdinalIgnoreCase);
+            var theme = pack.Palette;
+            var selected = string.Equals(pack.Id, _themes.CurrentPack.Id, StringComparison.OrdinalIgnoreCase);
             var card = new Border
             {
                 Background = new SolidColorBrush(selected
@@ -436,7 +759,7 @@ public sealed partial class MainWindow : Window
                 BorderThickness = new Thickness(selected ? 1.5 : 1),
                 CornerRadius = new CornerRadius(12),
                 Padding = new Thickness(12, 10, 12, 10),
-                Tag = theme.Id,
+                Tag = pack.Id,
             };
 
             var row = new Grid();
@@ -457,14 +780,14 @@ public sealed partial class MainWindow : Window
             var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(new TextBlock
             {
-                Text = theme.Name,
+                Text = pack.Manifest.Name,
                 FontSize = 13,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(_themes.Current.Text),
             });
             text.Children.Add(new TextBlock
             {
-                Text = theme.Description,
+                Text = pack.GetDescription(Loc.Current),
                 FontSize = 11,
                 Foreground = new SolidColorBrush(_themes.Current.Muted),
                 TextWrapping = TextWrapping.Wrap,
@@ -485,7 +808,7 @@ public sealed partial class MainWindow : Window
             row.Children.Add(text);
             row.Children.Add(mark);
             card.Child = row;
-            card.Tapped += (_, _) => SelectTheme(theme.Id);
+            card.Tapped += (_, _) => SelectTheme(pack.Id);
             ThemesPanel.Children.Add(card);
         }
     }
@@ -497,7 +820,7 @@ public sealed partial class MainWindow : Window
         _config.ThemeId = themeId;
         _themes.Apply(themeId);
         Save();
-        FooterStatus.Text = $"Тема: {_themes.Current.Name}";
+        FooterStatus.Text = Loc.Format("status.theme", _themes.Current.Name);
     }
 
     private void ToggleFromHotkey()
@@ -545,14 +868,17 @@ public sealed partial class MainWindow : Window
         _expanded = true;
         _orb?.Hide();
 
-        var panelPos = WindowHelper.PanelFromOrb(_orbPos);
+        var panelPos = WindowHelper.PanelFromOrb(_orbPos, _panelWidth, _panelHeight);
         _appWindow.MoveAndResize(new RectInt32(
-            panelPos.X, panelPos.Y, WindowHelper.PanelWidth, WindowHelper.PanelHeight));
+            panelPos.X, panelPos.Y, _panelWidth, _panelHeight));
         WindowHelper.ApplyPanelChrome(this, _appWindow);
         WindowHelper.ShowWindowTopmost(this);
         Activate();
         BringToFront();
+        RefreshChatLayout();
         InputBox.Focus(FocusState.Programmatic);
+        if (_hasMessages && !_homeMode)
+            ScrollChatToBottom();
         Save();
     }
 
@@ -572,7 +898,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_expanded) return;
         var panelPos = _appWindow.Position;
-        _orbPos = WindowHelper.OrbFromPanel(panelPos);
+        _orbPos = WindowHelper.OrbFromPanel(panelPos, _panelWidth, _panelHeight);
         ShowOrbMode();
     }
 
@@ -602,7 +928,7 @@ public sealed partial class MainWindow : Window
 
         var next = WindowHelper.Clamp(
             new PointInt32(_dragWindowStart.X + dx, _dragWindowStart.Y + dy),
-            WindowHelper.PanelWidth, WindowHelper.PanelHeight);
+            _panelWidth, _panelHeight);
         _appWindow.Move(next);
         e.Handled = true;
     }
@@ -614,13 +940,68 @@ public sealed partial class MainWindow : Window
         RootGrid.ReleasePointerCapture(e.Pointer);
         if (_expanded)
         {
-            _orbPos = WindowHelper.OrbFromPanel(_appWindow.Position);
+            _orbPos = WindowHelper.OrbFromPanel(_appWindow.Position, _panelWidth, _panelHeight);
             Save();
         }
         e.Handled = true;
     }
 
     private void Collapse_Click(object sender, RoutedEventArgs e) => Collapse();
+
+    private double ChatBubbleMaxWidth() => Math.Max(220, _panelWidth - 96);
+
+    private void RefreshChatLayout()
+    {
+        var maxWidth = ChatBubbleMaxWidth();
+        foreach (var child in ChatPanel.Children)
+        {
+            if (child is FrameworkElement fe)
+                fe.MaxWidth = maxWidth;
+        }
+        ChatPanel.UpdateLayout();
+        ChatScroll.UpdateLayout();
+    }
+
+    private void ResizeGrip_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_expanded || !e.GetCurrentPoint(sender as UIElement).Properties.IsLeftButtonPressed)
+            return;
+        WindowHelper.GetCursorPos(out _resizeStartCursor);
+        _resizeStartWidth = _panelWidth;
+        _resizeStartHeight = _panelHeight;
+        _resizing = true;
+        (sender as UIElement)?.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void ResizeGrip_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_resizing) return;
+        WindowHelper.GetCursorPos(out var cursor);
+        var newWidth = WindowHelper.ClampPanelWidth(_resizeStartWidth + (cursor.X - _resizeStartCursor.X));
+        var newHeight = WindowHelper.ClampPanelHeight(_resizeStartHeight + (cursor.Y - _resizeStartCursor.Y));
+        if (newWidth == _panelWidth && newHeight == _panelHeight) return;
+        _panelWidth = newWidth;
+        _panelHeight = newHeight;
+        var pos = _appWindow.Position;
+        _appWindow.MoveAndResize(new RectInt32(pos.X, pos.Y, _panelWidth, _panelHeight));
+        WindowHelper.ApplyWindowRoundRegion(this, _panelWidth, _panelHeight);
+        RefreshFrameDecor();
+        RefreshChatLayout();
+        e.Handled = true;
+    }
+
+    private void ResizeGrip_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_resizing) return;
+        _resizing = false;
+        (sender as UIElement)?.ReleasePointerCapture(e.Pointer);
+        _config.PanelWidth = _panelWidth;
+        _config.PanelHeight = _panelHeight;
+        Save();
+        RefreshChatLayout();
+        e.Handled = true;
+    }
 
     private async void Send_Click(object sender, RoutedEventArgs e)
     {
@@ -710,11 +1091,11 @@ public sealed partial class MainWindow : Window
             }
 
             AddAttachment(path, "image");
-            FooterStatus.Text = "Скрін додано";
+            FooterStatus.Text = Loc.Get("status.screenshot_added");
         }
         catch (Exception ex)
         {
-            FooterStatus.Text = $"Скрін не вдався: {ex.Message}";
+            FooterStatus.Text = Loc.Format("status.screenshot_failed", ex.Message);
         }
     }
 
@@ -827,7 +1208,7 @@ public sealed partial class MainWindow : Window
         EnsureSession().Messages.Add(new ChatMessage { Role = "user", Text = display });
         PersistSession(display);
         SetBusy(true);
-        FooterStatus.Text = "Думаю…";
+        FooterStatus.Text = Loc.Get("status.thinking_short");
 
         _userCancelledRun = false;
         _runCts?.Cancel();
@@ -845,10 +1226,7 @@ public sealed partial class MainWindow : Window
         var cardBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
         var errorBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x8A, 0x8A));
 
-        void ScrollChat()
-        {
-            ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight + 80, null);
-        }
+        void ScrollChat() => ScrollChatToBottom();
 
         void RenderAnswer(string markdown, bool error = false)
         {
@@ -899,7 +1277,7 @@ public sealed partial class MainWindow : Window
                         ? thinkingBuilder.ToString()
                         : thinkingBuilder.ToString()[..Math.Min(900, thinkingBuilder.Length)] + "…";
                     if (!gotAnswer)
-                        turn.Status.Text = "Думаю…";
+                        turn.Status.Text = Loc.Get("status.thinking_short");
                 });
             },
             chunk =>
@@ -925,7 +1303,7 @@ public sealed partial class MainWindow : Window
                     turn.Status.Visibility = Visibility.Collapsed;
                     if (code == 0)
                     {
-                        FooterStatus.Text = "Готово";
+                        FooterStatus.Text = Loc.Get("status.done");
                         SetOnline(true);
                         _config.ChatId = _agent.ChatId;
                         if (!string.IsNullOrWhiteSpace(final))
@@ -938,12 +1316,12 @@ public sealed partial class MainWindow : Window
                     }
                     else if (code != -1)
                     {
-                        FooterStatus.Text = "Помилка — перевір вхід";
+                        FooterStatus.Text = Loc.Get("status.error_input");
                         SetOnline(false);
                         if (!string.IsNullOrWhiteSpace(final))
                             answerMarkdown = final;
                         else if (string.IsNullOrWhiteSpace(answerMarkdown))
-                            answerMarkdown = "Не вдалося отримати відповідь";
+                            answerMarkdown = Loc.Get("chat.no_answer");
                         RenderAnswer(answerMarkdown, error: true);
                         AppendAssistantHistory(answerMarkdown);
                         SetMascotState(MascotState.Error);
@@ -951,10 +1329,10 @@ public sealed partial class MainWindow : Window
                     else
                     {
                         FooterStatus.Text = _userCancelledRun
-                            ? "Скасовано"
-                            : "Агент не відповів (таймаут 10 хв)";
+                            ? Loc.Get("status.cancelled")
+                            : Loc.Get("status.no_response");
                         if (string.IsNullOrWhiteSpace(answerMarkdown))
-                            answerMarkdown = _userCancelledRun ? "Скасовано" : "Час очікування вичерпано";
+                            answerMarkdown = _userCancelledRun ? Loc.Get("status.cancelled") : Loc.Get("status.timeout");
                         RenderAnswer(answerMarkdown);
                         SetMascotState(MascotState.Idle);
                     }
@@ -992,12 +1370,12 @@ public sealed partial class MainWindow : Window
         {
             Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Left,
-            MaxWidth = 320,
+            MaxWidth = ChatBubbleMaxWidth(),
         };
 
         var status = new TextBlock
         {
-            Text = "Думаю…",
+            Text = Loc.Get("status.thinking_short"),
             FontSize = 13,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = new SolidColorBrush(accent),
@@ -1030,7 +1408,7 @@ public sealed partial class MainWindow : Window
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var copyBtn = new Button
         {
-            Content = "Копіювати",
+            Content = Loc.Get("chat.copy"),
             FontSize = 10,
             Padding = new Thickness(8, 2, 8, 2),
             MinHeight = 0,
@@ -1042,7 +1420,7 @@ public sealed partial class MainWindow : Window
         };
         var streamPreview = new TextBlock
         {
-            Text = "⏳ Чекаю відповідь агента…",
+            Text = Loc.Get("chat.waiting"),
             TextWrapping = TextWrapping.Wrap,
             IsTextSelectionEnabled = true,
             Foreground = new SolidColorBrush(_themes.Current.Muted),
@@ -1062,7 +1440,7 @@ public sealed partial class MainWindow : Window
             var package = new DataPackage();
             package.SetText(turnRef.AnswerMarkdown);
             Clipboard.SetContent(package);
-            FooterStatus.Text = "Скопійовано";
+            FooterStatus.Text = Loc.Get("status.copied");
         };
 
         toolbar.Children.Add(copyBtn);
@@ -1074,7 +1452,7 @@ public sealed partial class MainWindow : Window
         border.Child = body;
         stack.Children.Add(border);
         ChatPanel.Children.Add(stack);
-        ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight + 80, null);
+        ScrollChatToBottom();
         return turnRef;
     }
 
@@ -1093,7 +1471,7 @@ public sealed partial class MainWindow : Window
             CornerRadius = new CornerRadius(14),
             Padding = new Thickness(12, 10, 12, 10),
             HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
-            MaxWidth = 300,
+            MaxWidth = ChatBubbleMaxWidth(),
         };
         var tb = new TextBlock
         {
@@ -1104,7 +1482,7 @@ public sealed partial class MainWindow : Window
         };
         border.Child = tb;
         ChatPanel.Children.Add(border);
-        ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null);
+        ScrollChatToBottom();
         return tb;
     }
 
@@ -1122,7 +1500,7 @@ public sealed partial class MainWindow : Window
         InputBox.IsEnabled = !busy;
         if (busy)
         {
-            StatusText.Text = "Думає…";
+            StatusText.Text = Loc.Get("status.thinking");
             SendIcon.Glyph = "\uE711";
             SendButton.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0x6B, 0x6B));
             SetMascotState(MascotState.Thinking);
@@ -1132,9 +1510,9 @@ public sealed partial class MainWindow : Window
             SendIcon.Glyph = "\uE724";
             SendButton.Background = new SolidColorBrush(_themes.Current.Accent);
             if (!_expanded || StatusDot.Fill is not SolidColorBrush)
-                StatusText.Text = "Online";
+                StatusText.Text = Loc.Get("status.online");
             else
-                SetOnline(StatusText.Text != "Offline");
+                SetOnline(StatusText.Text != Loc.Get("status.offline"));
         }
 
         UpdateScreenLayout();
@@ -1148,7 +1526,7 @@ public sealed partial class MainWindow : Window
         _runCts?.Cancel();
         SetBusy(false);
         SetMascotState(MascotState.Idle);
-        FooterStatus.Text = "Скасовано";
+        FooterStatus.Text = Loc.Get("status.cancelled");
     }
 
     private void SetMascotState(MascotState state)
@@ -1173,7 +1551,7 @@ public sealed partial class MainWindow : Window
             ? _themes.Current.Accent
             : Windows.UI.Color.FromArgb(0xFF, 0x5C, 0x5C, 0x6E));
         if (!_busy)
-            StatusText.Text = online ? "Online" : "Offline";
+            StatusText.Text = online ? Loc.Get("status.online") : Loc.Get("status.offline");
     }
 
     private async Task RefreshStatusAsync()
@@ -1185,8 +1563,8 @@ public sealed partial class MainWindow : Window
         {
             FooterStatus.Text = status switch
             {
-                "missing" => "Встанови Cursor Agent",
-                "logged_out" => "Увійди в налаштування",
+                "missing" => Loc.Format("status.agent_missing", ProviderLabel()),
+                "logged_out" => Loc.Get("status.agent_login"),
                 _ => FooterStatus.Text,
             };
         }
@@ -1197,18 +1575,240 @@ public sealed partial class MainWindow : Window
     {
         status ??= await _agent.CheckStatusAsync();
         var loggedIn = _agent.IsLoggedIn(status);
+        var providerName = ProviderLabel();
 
+        SettingsAuthTitle.Text = Loc.Format("settings.auth.title", providerName);
         SettingsAuthStatus.Text = status switch
         {
-            "ready" => "Увійшов у Cursor",
-            "logged_out" => "Не увійшов",
-            "missing" => "Cursor Agent не встановлено",
-            _ => "Не вдалося перевірити статус",
+            "ready" => Loc.Format("settings.auth.ready", providerName),
+            "logged_out" => Loc.Get("settings.auth.logged_out"),
+            "missing" => Loc.Format("settings.auth.missing", providerName),
+            _ => Loc.Get("settings.auth.unknown"),
         };
 
-        SettingsLoginBtn.Visibility = loggedIn ? Visibility.Collapsed : Visibility.Visible;
-        SettingsLogoutBtn.Visibility = loggedIn ? Visibility.Visible : Visibility.Collapsed;
+        SettingsLoginBtn.Content = Loc.Format("settings.auth.login", providerName);
+        SettingsLoginBtn.Visibility = _agent.SupportsLogin && !loggedIn ? Visibility.Visible : Visibility.Collapsed;
+        SettingsLogoutBtn.Visibility = _agent.SupportsLogin && loggedIn ? Visibility.Visible : Visibility.Collapsed;
         SettingsWorkspaceText.Text = _agent.Workspace;
+        RefreshUpdateSettingsUi();
+    }
+
+    private string ProviderLabel() => Loc.Get($"provider.{_agent.ProviderId}.name");
+
+    private void PopulateProviderCombo()
+    {
+        if (SettingsProviderCombo.Items.Count > 0) return;
+        foreach (var provider in _agent.Providers)
+        {
+            SettingsProviderCombo.Items.Add(new ComboBoxItem
+            {
+                Content = Loc.Get(provider.NameKey),
+                Tag = provider.Id,
+            });
+        }
+    }
+
+    private void RefreshProviderComboLabels()
+    {
+        for (var i = 0; i < SettingsProviderCombo.Items.Count; i++)
+        {
+            if (SettingsProviderCombo.Items[i] is not ComboBoxItem item) continue;
+            var id = item.Tag as string;
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            item.Content = Loc.Get($"provider.{id}.name");
+        }
+    }
+
+    private void SelectProviderInSettings()
+    {
+        _loadingProvider = true;
+        var providerId = _agent.ProviderId;
+        for (var i = 0; i < SettingsProviderCombo.Items.Count; i++)
+        {
+            if (SettingsProviderCombo.Items[i] is ComboBoxItem item
+                && string.Equals(item.Tag as string, providerId, StringComparison.OrdinalIgnoreCase))
+            {
+                SettingsProviderCombo.SelectedIndex = i;
+                break;
+            }
+        }
+        _loadingProvider = false;
+        ApplyProviderSettingsUi();
+    }
+
+    private void ApplyProviderSettingsUi()
+    {
+        var descriptor = AgentProviderRegistry.GetDescriptor(_agent.ProviderId);
+        SettingsProviderHint.Text = Loc.Get(descriptor.HintKey);
+        SettingsAuthCard.Visibility = descriptor.SupportsLogin ? Visibility.Visible : Visibility.Collapsed;
+        SettingsModeCard.Visibility = descriptor.SupportsModes ? Visibility.Visible : Visibility.Collapsed;
+        SettingsModelCard.Visibility = descriptor.SupportsModels ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void SettingsProvider_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingProvider) return;
+        if (SettingsProviderCombo.SelectedItem is not ComboBoxItem item) return;
+        var providerId = item.Tag as string;
+        if (string.IsNullOrWhiteSpace(providerId)) return;
+        if (string.Equals(_agent.ProviderId, providerId, StringComparison.OrdinalIgnoreCase)) return;
+
+        _agent.SetProvider(providerId);
+        _config.ChatId = null;
+        if (_currentSession is not null)
+            _currentSession.AgentProvider = _agent.ProviderId;
+        Save();
+        ApplyProviderSettingsUi();
+        await RefreshStatusAsync();
+        await LoadModelsAsync();
+        FooterStatus.Text = Loc.Format("status.model", ProviderLabel());
+    }
+
+    private void RefreshUpdateSettingsUi()
+    {
+        SettingsVersionText.Text = Loc.Format("settings.update.version", AppVersion.Current);
+        SettingsInstallUpdateBtn.Visibility = _pendingUpdate is null
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        if (_installingUpdate)
+            return;
+        SettingsUpdateStatus.Text = _pendingUpdate is null
+            ? Loc.Get("settings.update.auto")
+            : Loc.Format("settings.update.available", _pendingUpdate.Version);
+    }
+
+    private async Task CheckForUpdatesOnStartupAsync()
+    {
+        await Task.Delay(2500);
+        try
+        {
+            var update = await _updates.CheckForUpdateAsync(_config);
+            Save();
+            if (update is null) return;
+            if (string.Equals(_config.SkippedUpdateVersion, update.Version, StringComparison.OrdinalIgnoreCase))
+                return;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _pendingUpdate = update;
+                RefreshUpdateSettingsUi();
+                if (!_expanded)
+                    Expand();
+                _ = ShowUpdateDialogAsync(update);
+            });
+        }
+        catch { /* ignore */ }
+    }
+
+    private async Task CheckForUpdatesManualAsync()
+    {
+        if (_checkingUpdate || _installingUpdate) return;
+        _checkingUpdate = true;
+        SettingsCheckUpdateBtn.IsEnabled = false;
+        SettingsUpdateStatus.Text = Loc.Get("settings.update.checking");
+        SettingsUpdateProgress.Visibility = Visibility.Collapsed;
+        try
+        {
+            var update = await _updates.CheckForUpdateAsync(_config, force: true);
+            Save();
+            _pendingUpdate = update;
+            SettingsUpdateStatus.Text = update is null
+                ? Loc.Get("settings.update.up_to_date")
+                : Loc.Format("settings.update.available", update.Version);
+            RefreshUpdateSettingsUi();
+            if (update is not null)
+                await ShowUpdateDialogAsync(update);
+        }
+        catch (Exception ex)
+        {
+            SettingsUpdateStatus.Text = Loc.Format("settings.update.check_failed", ex.Message);
+        }
+        finally
+        {
+            _checkingUpdate = false;
+            SettingsCheckUpdateBtn.IsEnabled = true;
+        }
+    }
+
+    private async Task ShowUpdateDialogAsync(UpdateInfo update)
+    {
+        var notes = update.ReleaseNotes;
+        if (notes.Length > 700)
+            notes = notes[..700] + "…";
+
+        var dialog = new ContentDialog
+        {
+            Title = Loc.Format("settings.update.dialog_title", update.Version),
+            Content = new ScrollViewer
+            {
+                MaxHeight = 220,
+                Content = new TextBlock
+                {
+                    Text = notes,
+                    TextWrapping = TextWrapping.Wrap,
+                },
+            },
+            PrimaryButtonText = Loc.Get("settings.update.dialog_primary"),
+            SecondaryButtonText = Loc.Get("settings.update.dialog_secondary"),
+            CloseButtonText = Loc.Get("settings.update.dialog_close"),
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+            await InstallPendingUpdateAsync();
+        else if (result == ContentDialogResult.None)
+        {
+            _config.SkippedUpdateVersion = update.Version;
+            Save();
+        }
+    }
+
+    private async void SettingsCheckUpdate_Click(object sender, RoutedEventArgs e) =>
+        await CheckForUpdatesManualAsync();
+
+    private async void SettingsInstallUpdate_Click(object sender, RoutedEventArgs e) =>
+        await InstallPendingUpdateAsync();
+
+    private async Task InstallPendingUpdateAsync()
+    {
+        if (_pendingUpdate is null || _installingUpdate) return;
+        _installingUpdate = true;
+        SettingsInstallUpdateBtn.IsEnabled = false;
+        SettingsCheckUpdateBtn.IsEnabled = false;
+        SettingsUpdateProgress.Visibility = Visibility.Visible;
+        SettingsUpdateProgress.Value = 0;
+        SettingsUpdateStatus.Text = Loc.Get("settings.update.downloading");
+
+        try
+        {
+            var portable = UpdateService.ShouldUsePortableUpdate();
+            var path = await _updates.DownloadAsync(
+                _pendingUpdate,
+                portable,
+                new Progress<double>(p => SettingsUpdateProgress.Value = p));
+
+            SettingsUpdateStatus.Text = Loc.Get("settings.update.installing");
+            if (portable)
+                _updates.ApplyPortable(path);
+            else
+                _updates.ApplyInstaller(path);
+
+            _hotkey.Dispose();
+            _orb?.Dispose();
+            _orb = null;
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+            Application.Current.Exit();
+        }
+        catch (Exception ex)
+        {
+            SettingsUpdateStatus.Text = Loc.Format("settings.update.install_failed", ex.Message);
+            SettingsUpdateProgress.Visibility = Visibility.Collapsed;
+            SettingsInstallUpdateBtn.IsEnabled = true;
+            SettingsCheckUpdateBtn.IsEnabled = true;
+            _installingUpdate = false;
+        }
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e)
@@ -1218,7 +1818,9 @@ public sealed partial class MainWindow : Window
         ApplyPanelChromeColors();
         RefreshThemeCards();
         SelectModeInSettings();
+        SelectProviderInSettings();
         RefreshRecentWorkspaces();
+        RefreshUpdateSettingsUi();
         _ = UpdateSettingsAuthUiAsync();
         _ = LoadModelsAsync();
     }
@@ -1262,7 +1864,7 @@ public sealed partial class MainWindow : Window
         if (string.Equals(_config.ModelId, id, StringComparison.OrdinalIgnoreCase)) return;
         _config.ModelId = id;
         Save();
-        FooterStatus.Text = $"Модель: {item.Content}";
+        FooterStatus.Text = Loc.Format("status.model", item.Content);
     }
 
     private void SettingsBack_Click(object sender, RoutedEventArgs e)
@@ -1273,7 +1875,7 @@ public sealed partial class MainWindow : Window
     private void SettingsLogin_Click(object sender, RoutedEventArgs e)
     {
         _agent.Login();
-        FooterStatus.Text = "Заверши вхід у браузері";
+        FooterStatus.Text = Loc.Get("status.login_browser");
     }
 
     private async void SettingsLogout_Click(object sender, RoutedEventArgs e)
@@ -1282,7 +1884,7 @@ public sealed partial class MainWindow : Window
         _config.ChatId = null;
         Save();
         await RefreshStatusAsync();
-        FooterStatus.Text = "Вийшов з Cursor";
+        FooterStatus.Text = Loc.Format("status.logged_out", ProviderLabel());
     }
 
     private async void NewChat_Click(object sender, RoutedEventArgs e)
@@ -1295,36 +1897,28 @@ public sealed partial class MainWindow : Window
         ClearAttachments();
         _config.ChatId = null;
         _currentSession = _chatHistory.CreateSession(_agent.Workspace);
+        _currentSession.AgentProvider = _agent.ProviderId;
         _config.LocalSessionId = _currentSession.Id;
         Save();
     }
 
-    private void History_Click(object sender, RoutedEventArgs e)
-    {
-        SettingsOverlay.Visibility = Visibility.Collapsed;
-        HistoryOverlay.Visibility = Visibility.Visible;
-        ApplyPanelChromeColors();
-        RefreshHistoryList();
-    }
+    private void History_Click(object sender, RoutedEventArgs e) => ShowHomeScreen();
 
     private void HistoryBack_Click(object sender, RoutedEventArgs e)
     {
         HistoryOverlay.Visibility = Visibility.Collapsed;
     }
 
-    private void RefreshHistoryList()
-    {
-        HistoryPanel.Children.Clear();
-        foreach (var session in _chatHistory.List())
-            HistoryPanel.Children.Add(MakeHistorySessionCard(session));
-
-        var hasItems = HistoryPanel.Children.Count > 0;
-        HistoryEmptyCard.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
-        HistoryPanel.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
-    }
-
     private void LoadSession(ChatSession session)
     {
+        if (!string.IsNullOrWhiteSpace(session.AgentProvider)
+            && !string.Equals(session.AgentProvider, _agent.ProviderId, StringComparison.OrdinalIgnoreCase))
+        {
+            _agent.SetProvider(session.AgentProvider);
+            ApplyProviderSettingsUi();
+            SelectProviderInSettings();
+        }
+
         _currentSession = session;
         _config.LocalSessionId = session.Id;
         _config.ChatId = session.AgentChatId;
@@ -1361,6 +1955,8 @@ public sealed partial class MainWindow : Window
                 turn.CopyBtn.Visibility = Visibility.Visible;
             }
         }
+        RefreshChatLayout();
+        ScrollChatToBottom();
         Save();
     }
 
@@ -1393,6 +1989,7 @@ public sealed partial class MainWindow : Window
             }
         }
         _currentSession = _chatHistory.CreateSession(_agent.Workspace);
+        _currentSession.AgentProvider = _agent.ProviderId;
         _config.LocalSessionId = _currentSession.Id;
         Save();
         return _currentSession;
@@ -1403,6 +2000,7 @@ public sealed partial class MainWindow : Window
         if (_currentSession is null) return;
         _currentSession.AgentChatId = _config.ChatId;
         _currentSession.Workspace = _agent.Workspace;
+        _currentSession.AgentProvider = _agent.ProviderId;
         if (!string.IsNullOrWhiteSpace(firstUserLine) && _currentSession.Messages.Count == 1)
             _currentSession.Title = ChatHistoryService.MakeTitle(firstUserLine);
         _chatHistory.Save(_currentSession);
@@ -1419,11 +2017,11 @@ public sealed partial class MainWindow : Window
     private async void Voice_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        FooterStatus.Text = "Слухаю… (може з'явитись вікно Windows)";
+        FooterStatus.Text = Loc.Get("status.listening");
         var outcome = await _speech.RecognizeAsync();
         if (outcome.Cancelled)
         {
-            FooterStatus.Text = "Скасовано";
+            FooterStatus.Text = Loc.Get("status.cancelled");
             return;
         }
         if (!string.IsNullOrWhiteSpace(outcome.Error))
@@ -1433,13 +2031,13 @@ public sealed partial class MainWindow : Window
         }
         if (string.IsNullOrWhiteSpace(outcome.Text))
         {
-            FooterStatus.Text = "Голос не розпізнано";
+            FooterStatus.Text = Loc.Get("status.voice_failed");
             return;
         }
         InputBox.Text = string.IsNullOrWhiteSpace(InputBox.Text)
             ? outcome.Text
             : InputBox.Text.TrimEnd() + " " + outcome.Text;
-        FooterStatus.Text = "Голос додано";
+        FooterStatus.Text = Loc.Get("status.voice_added");
         InputBox.Focus(FocusState.Programmatic);
     }
 
@@ -1467,7 +2065,7 @@ public sealed partial class MainWindow : Window
         if (string.Equals(_config.AgentMode, mode, StringComparison.OrdinalIgnoreCase)) return;
         _config.AgentMode = mode;
         Save();
-        FooterStatus.Text = $"Режим: {item.Content}";
+        FooterStatus.Text = Loc.Format("status.mode", item.Content);
     }
 
     private void RefreshRecentWorkspaces()
@@ -1530,51 +2128,65 @@ public sealed partial class MainWindow : Window
     private void SetupTray()
     {
         RefreshTrayIcon();
-        var menu = new MenuFlyout();
-        _tray.ContextFlyout = menu;
-        var show = new MenuFlyoutItem { Text = "Показати (Ctrl+Shift+C)" };
-        show.Click += (_, _) => Expand();
-        var hide = new MenuFlyoutItem { Text = "Сховати" };
-        hide.Click += (_, _) => Collapse();
-        var shot = new MenuFlyoutItem { Text = "Скрін + відкрити" };
-        shot.Click += (_, _) =>
+        _tray.ContextFlyout = null;
+        _trayOpenMenuCommand = new XamlUICommand();
+        _trayOpenMenuCommand.ExecuteRequested += (_, _) =>
+            DispatcherQueue.TryEnqueue(ShowTrayMenu);
+        _tray.RightClickCommand = _trayOpenMenuCommand;
+        _tray.NoLeftClickDelay = true;
+        _tray.LeftClickCommand = new XamlUICommand();
+        ((XamlUICommand)_tray.LeftClickCommand).ExecuteRequested += (_, _) =>
+            DispatcherQueue.TryEnqueue(ToggleFromHotkey);
+
+        _trayMenu = new NativeTrayMenuService(
+            DispatcherQueue,
+            () => WindowNative.GetWindowHandle(this));
+        RefreshTrayMenu();
+        _tray.ForceCreate();
+    }
+
+    private void RefreshTrayMenu()
+    {
+        if (_trayMenu is null) return;
+        _trayMenu.Clear();
+        _trayMenu.AddItem(Loc.Get("tray.show"), Expand);
+        _trayMenu.AddItem(Loc.Get("tray.hide"), Collapse);
+        _trayMenu.AddItem(Loc.Get("tray.screenshot"), () =>
         {
             Expand();
             CaptureScreenshot();
-        };
-        var reset = new MenuFlyoutItem { Text = "На екран" };
-        reset.Click += (_, _) =>
+        });
+        _trayMenu.AddItem(Loc.Get("tray.reset_pos"), ResetTrayPosition);
+        _trayMenu.AddSeparator();
+        _trayMenu.AddItem(Loc.Get("tray.exit"), ExitApp);
+    }
+
+    private void ShowTrayMenu() => _trayMenu?.Show();
+
+    private void ResetTrayPosition()
+    {
+        _orbPos = WindowHelper.DefaultOrbPosition();
+        if (_expanded)
         {
-            _orbPos = WindowHelper.DefaultOrbPosition();
-            if (_expanded)
-            {
-                var panelPos = WindowHelper.PanelFromOrb(_orbPos);
-                _appWindow.MoveAndResize(new RectInt32(
-                    panelPos.X, panelPos.Y, WindowHelper.PanelWidth, WindowHelper.PanelHeight));
-            }
-            else
-            {
-                _orb?.Move(_orbPos);
-            }
-            Save();
-        };
-        var quit = new MenuFlyoutItem { Text = "Вихід" };
-        quit.Click += (_, _) =>
+            var panelPos = WindowHelper.PanelFromOrb(_orbPos, _panelWidth, _panelHeight);
+            _appWindow.MoveAndResize(new RectInt32(
+                panelPos.X, panelPos.Y, _panelWidth, _panelHeight));
+        }
+        else
         {
-            _hotkey.Dispose();
-            _orb?.Dispose();
-            _orb = null;
-            _trayIcon?.Dispose();
-            _trayIcon = null;
-            Application.Current.Exit();
-        };
-        menu.Items.Add(show);
-        menu.Items.Add(hide);
-        menu.Items.Add(shot);
-        menu.Items.Add(reset);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(quit);
-        _tray.ForceCreate();
+            _orb?.Move(_orbPos);
+        }
+        Save();
+    }
+
+    private void ExitApp()
+    {
+        _hotkey.Dispose();
+        _orb?.Dispose();
+        _orb = null;
+        _trayIcon?.Dispose();
+        _trayIcon = null;
+        Application.Current.Exit();
     }
 
     private void RefreshTrayIcon()
@@ -1589,6 +2201,8 @@ public sealed partial class MainWindow : Window
         _config.WindowX = _orbPos.X;
         _config.WindowY = _orbPos.Y;
         _config.Expanded = _expanded;
+        _config.PanelWidth = _panelWidth;
+        _config.PanelHeight = _panelHeight;
         _config.Workspace = _agent.Workspace;
         _config.ChatId = _agent.ChatId;
         _config.LocalSessionId = _currentSession?.Id ?? _config.LocalSessionId;

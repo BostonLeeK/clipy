@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Clipy.Localization;
 using Clipy.Models;
 
 namespace Clipy.Services;
@@ -22,7 +23,7 @@ public sealed class ChatHistoryService
         var session = new ChatSession
         {
             Workspace = workspace,
-            Title = "Новий чат",
+            Title = Loc.Get("chat.new"),
         };
         Save(session);
         return session;
@@ -92,6 +93,6 @@ public sealed class ChatHistoryService
     {
         var t = firstUserMessage.Replace('\n', ' ').Trim();
         if (t.Length > 48) t = t[..45] + "…";
-        return string.IsNullOrWhiteSpace(t) ? "Новий чат" : t;
+        return string.IsNullOrWhiteSpace(t) ? Loc.Get("chat.new") : t;
     }
 }

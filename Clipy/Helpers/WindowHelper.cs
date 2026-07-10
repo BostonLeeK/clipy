@@ -33,8 +33,20 @@ public static class WindowHelper
     private static readonly IntPtr HWND_TOPMOST = new(-1);
 
     public const int OrbSize = 60;
-    public const int PanelWidth = 380;
-    public const int PanelHeight = 600;
+    public const int DefaultPanelWidth = 380;
+    public const int DefaultPanelHeight = 600;
+    public const int MinPanelWidth = 320;
+    public const int MinPanelHeight = 420;
+    public const int MaxPanelWidth = 720;
+    public const int MaxPanelHeight = 900;
+    public const int PanelWidth = DefaultPanelWidth;
+    public const int PanelHeight = DefaultPanelHeight;
+
+    public static int ClampPanelWidth(int width) =>
+        Math.Clamp(width, MinPanelWidth, MaxPanelWidth);
+
+    public static int ClampPanelHeight(int height) =>
+        Math.Clamp(height, MinPanelHeight, MaxPanelHeight);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct Point
@@ -161,11 +173,18 @@ public static class WindowHelper
         var margins = new Margins { Left = 0, Right = 0, Top = 0, Bottom = 0 };
         DwmExtendFrameIntoClientArea(hwnd, ref margins);
 
-        var radius = 40;
-        var rgn = CreateRoundRectRgn(0, 0, PanelWidth + 1, PanelHeight + 1, radius, radius);
-        SetWindowRgn(hwnd, rgn, true);
+        var size = appWindow.Size;
+        ApplyWindowRoundRegion(window, size.Width, size.Height);
 
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+
+    public static void ApplyWindowRoundRegion(Window window, int width, int height)
+    {
+        var hwnd = WindowNative.GetWindowHandle(window);
+        const int radius = 40;
+        var rgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius, radius);
+        SetWindowRgn(hwnd, rgn, true);
     }
 
     public static RectInt32 GetWorkArea()
@@ -197,11 +216,17 @@ public static class WindowHelper
     public static PointInt32 TopLeftFromAnchor(PointInt32 anchor, int width, int height) =>
         Clamp(new PointInt32(anchor.X - width, anchor.Y - height), width, height);
 
+    public static PointInt32 PanelFromOrb(PointInt32 orb, int panelWidth, int panelHeight) =>
+        TopLeftFromAnchor(BottomRight(orb, OrbSize, OrbSize), panelWidth, panelHeight);
+
+    public static PointInt32 OrbFromPanel(PointInt32 panel, int panelWidth, int panelHeight) =>
+        TopLeftFromAnchor(BottomRight(panel, panelWidth, panelHeight), OrbSize, OrbSize);
+
     public static PointInt32 PanelFromOrb(PointInt32 orb) =>
-        TopLeftFromAnchor(BottomRight(orb, OrbSize, OrbSize), PanelWidth, PanelHeight);
+        PanelFromOrb(orb, DefaultPanelWidth, DefaultPanelHeight);
 
     public static PointInt32 OrbFromPanel(PointInt32 panel) =>
-        TopLeftFromAnchor(BottomRight(panel, PanelWidth, PanelHeight), OrbSize, OrbSize);
+        OrbFromPanel(panel, DefaultPanelWidth, DefaultPanelHeight);
 
     public static bool IsOnScreen(PointInt32 pos, int w, int h)
     {

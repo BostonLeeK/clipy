@@ -14,6 +14,12 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <EnableMsixTooling>true</EnableMsixTooling>
     <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <ClipyVersion>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)\..\version.txt').Trim())</ClipyVersion>
+    <Version>$(ClipyVersion)</Version>
+    <AssemblyVersion>$(ClipyVersion).0</AssemblyVersion>
+    <FileVersion>$(ClipyVersion).0</FileVersion>
+    <InformationalVersion>$(ClipyVersion)</InformationalVersion>
+    <ApplicationIcon>Assets\clipy.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,11 +27,19 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.2.0" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="System.Speech" Version="9.0.0" />
   </ItemGroup>
 
-  <ItemGroup>
+    <ItemGroup>
+    <Content Include="Assets\clipy.ico" />
     <Content Include="Assets\Square44x44Logo.png" />
     <Content Include="Assets\Square150x150Logo.png" />
+    <Content Include="Themes\Packs\**\theme.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Themes\Packs\**\assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

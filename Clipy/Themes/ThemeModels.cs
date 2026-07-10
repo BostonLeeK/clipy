@@ -4,6 +4,7 @@ public static class ThemeIds
 {
     public const string Default = "default";
     public const string Kawaii = "kawaii";
+    public const string Grain = "grain";
 }
 
 public sealed class ThemePalette

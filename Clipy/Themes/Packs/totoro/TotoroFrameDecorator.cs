@@ -2,11 +2,13 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
-namespace Clipy.Themes;
+using Clipy.Themes;
 
-public static class TotoroFrameDecorator
+namespace Clipy.Themes.Packs.Totoro;
+
+public sealed class TotoroFrameDecorator : IFrameDecorator
 {
-    public static Bitmap Render(int width, int height)
+    public Bitmap Render(int width, int height)
     {
         var bmp = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(bmp);

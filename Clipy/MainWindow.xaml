@@ -5,17 +5,17 @@
     xmlns:controls="using:Clipy.Controls">
 
     <Grid x:Name="RootGrid" Background="Transparent">
-        <Border x:Name="FrameBorder" Width="380" Height="600" CornerRadius="22" Padding="1.5"
-                BorderThickness="0" Background="{StaticResource PanelFrameGradient}">
+        <Grid x:Name="PanelHost">
+        <Border x:Name="FrameBorder" CornerRadius="22" Padding="1.5"
+                BorderThickness="0" Background="{StaticResource PanelFrameGradient}"
+                HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
             <Border x:Name="PanelView" CornerRadius="20.5" BorderThickness="1"
                     BorderBrush="#22FFFFFF" Background="{StaticResource BgBrush}">
             <Grid Padding="16">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
+                    <RowDefinition Height="*" MinHeight="0" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -56,39 +56,72 @@
                     </Button>
                 </Grid>
 
-                <Border x:Name="GreetingCard" Grid.Row="1" Background="{StaticResource CardBrush}" CornerRadius="14"
-                        Padding="14" Margin="0,0,0,10" BorderBrush="#22FFFFFF" BorderThickness="1">
-                    <TextBlock Text="Привіт 👋&#x0a;Чим допомогти сьогодні?" Foreground="{StaticResource TextBrush}" />
-                </Border>
-
-                <StackPanel x:Name="QuickActions" Grid.Row="2" Orientation="Horizontal" Spacing="6" Margin="0,0,0,6">
-                    <Button Style="{StaticResource ActionButtonStyle}" Content="Новий чат" Click="NewChat_Click"
-                            Background="{StaticResource AccentBrush}" Foreground="#0B0B0F" CornerRadius="10" Padding="12,6" />
-                    <Button x:Name="OpenChatBtn" Style="{StaticResource ActionButtonStyle}" Content="Чат" Click="OpenChat_Click"
-                            Background="{StaticResource CardBrush}" Foreground="{StaticResource TextBrush}"
-                            CornerRadius="10" Padding="12,6" Visibility="Collapsed" />
-                    <Button Style="{StaticResource ActionButtonStyle}" Content="Історія" Click="History_Click"
-                            Background="{StaticResource CardBrush}" Foreground="{StaticResource TextBrush}"
-                            CornerRadius="10" Padding="12,6" />
-                    <Button Style="{StaticResource ActionButtonStyle}" Content="Папка" Click="Folder_Click"
-                            Background="{StaticResource CardBrush}" Foreground="{StaticResource TextBrush}"
-                            CornerRadius="10" Padding="12,6" />
-                </StackPanel>
-
-                <TextBlock x:Name="WorkspaceText" Grid.Row="3" FontSize="10" Foreground="{StaticResource MutedBrush}"
+                <TextBlock x:Name="WorkspaceText" Grid.Row="1" FontSize="10" Foreground="{StaticResource MutedBrush}"
                            Margin="2,0,0,8" TextTrimming="CharacterEllipsis" />
 
-                <ScrollViewer Grid.Row="4" x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
-                    <StackPanel x:Name="ChatPanel" Spacing="8" />
-                </ScrollViewer>
+                <Grid Grid.Row="2" MinHeight="0">
+                    <Grid x:Name="HomePanel">
+                        <Grid x:Name="HomeBackdrop" IsHitTestVisible="False">
+                            <Image x:Name="HomeBgGif" Stretch="Uniform" Opacity="0.38"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <Border x:Name="HomeBgOverlay" />
+                        </Grid>
 
-                <ScrollViewer x:Name="AttachScroll" Grid.Row="5" Visibility="Collapsed"
+                        <Grid RowSpacing="10" VerticalAlignment="Stretch">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" MinHeight="0" />
+                            </Grid.RowDefinitions>
+
+                            <Border x:Name="GreetingCard" Grid.Row="0" CornerRadius="14"
+                                    Padding="12,10" BorderThickness="1">
+                                <TextBlock x:Name="GreetingText" Text="Привіт 👋 Чим допомогти сьогодні?" />
+                            </Border>
+
+                            <StackPanel x:Name="QuickActions" Grid.Row="1" Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="NewChatBtn" Style="{StaticResource ActionButtonStyle}" Content="Новий чат" Click="NewChat_Click"
+                                        Background="{StaticResource AccentBrush}" Foreground="#0B0B0F" CornerRadius="10" Padding="12,6" />
+                                <Button x:Name="OpenChatBtn" Style="{StaticResource ActionButtonStyle}" Content="Чат" Click="OpenChat_Click"
+                                        Background="{StaticResource CardBrush}" Foreground="{StaticResource TextBrush}"
+                                        CornerRadius="10" Padding="12,6" Visibility="Collapsed" />
+                                <Button x:Name="FolderBtn" Style="{StaticResource ActionButtonStyle}" Content="Папка" Click="Folder_Click"
+                                        Background="{StaticResource CardBrush}" Foreground="{StaticResource TextBrush}"
+                                        CornerRadius="10" Padding="12,6" />
+                            </StackPanel>
+
+                            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="8">
+                                    <TextBlock x:Name="HomeHistoryTitle" Text="Недавні чати" FontSize="13"
+                                               FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                    <Border x:Name="HomeHistoryEmptyCard" CornerRadius="14" Padding="16,14" BorderThickness="1">
+                                        <StackPanel Spacing="4" HorizontalAlignment="Center">
+                                            <TextBlock x:Name="HomeHistoryEmptyIcon" Text="🌿" FontSize="24"
+                                                       HorizontalAlignment="Center" />
+                                            <TextBlock x:Name="HomeHistoryEmptyTitle" Text="Ще немає чатів"
+                                                       FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                            <TextBlock x:Name="HomeHistoryEmptyHint" Text="Напиши задачу внизу — з'явиться тут"
+                                                       FontSize="11" HorizontalAlignment="Center" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
+                                    <StackPanel x:Name="HomeHistoryPanel" Spacing="6" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+                    </Grid>
+
+                    <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                        <StackPanel x:Name="ChatPanel" Spacing="8" />
+                    </ScrollViewer>
+                </Grid>
+
+                <ScrollViewer x:Name="AttachScroll" Grid.Row="3" Visibility="Collapsed"
                               HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
                               Margin="0,8,0,0">
                     <StackPanel x:Name="AttachPanel" Orientation="Horizontal" Spacing="6" />
                 </ScrollViewer>
 
-                <Grid Grid.Row="6" Margin="0,10,0,0">
+                <Grid Grid.Row="4" Margin="0,10,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
@@ -96,17 +129,17 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <Button Grid.Column="0" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
+                    <Button x:Name="AttachFileBtn" Grid.Column="0" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
                             Click="AttachFile_Click" Background="{StaticResource CardBrush}" CornerRadius="12"
                             ToolTipService.ToolTip="Додати файл / папку">
                         <FontIcon Glyph="&#xE8E5;" FontSize="14" Foreground="{StaticResource TextBrush}" />
                     </Button>
-                    <Button Grid.Column="1" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
+                    <Button x:Name="ScreenshotBtn" Grid.Column="1" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
                             Margin="6,0,0,0" Click="Screenshot_Click" Background="{StaticResource CardBrush}" CornerRadius="12"
                             ToolTipService.ToolTip="Скрін екрана (Ctrl+Shift+S)">
                         <FontIcon Glyph="&#xE7C5;" FontSize="14" Foreground="{StaticResource TextBrush}" />
                     </Button>
-                    <Button Grid.Column="2" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
+                    <Button x:Name="VoiceBtn" Grid.Column="2" Style="{StaticResource IconButtonStyle}" Width="40" Height="44"
                             Margin="6,0,0,0" Click="Voice_Click" Background="{StaticResource CardBrush}" CornerRadius="12"
                             ToolTipService.ToolTip="Голосовий ввід">
                         <FontIcon Glyph="&#xE720;" FontSize="14" Foreground="{StaticResource TextBrush}" />
@@ -124,10 +157,27 @@
                     </Button>
                 </Grid>
 
-                <TextBlock x:Name="FooterStatus" Grid.Row="7" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="2,6,0,0"
-                           Text="Ctrl+Enter — надіслати · Ctrl+Shift+C — відкрити/сховати" />
+                <Grid Grid.Row="5" Margin="0,6,0,0">
+                    <TextBlock x:Name="FooterStatus" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="2,0,36,0"
+                               VerticalAlignment="Center"
+                               Text="Ctrl+Enter — надіслати · Ctrl+Shift+C — відкрити/сховати" />
 
-                <Grid x:Name="HistoryOverlay" Grid.RowSpan="8" Visibility="Collapsed">
+                    <Border x:Name="ResizeGrip" Width="30" Height="30"
+                            HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Background="{StaticResource CardBrush}" CornerRadius="10"
+                            BorderBrush="#33FFFFFF" BorderThickness="1"
+                            PointerPressed="ResizeGrip_PointerPressed"
+                            PointerMoved="ResizeGrip_PointerMoved"
+                            PointerReleased="ResizeGrip_PointerReleased"
+                            PointerCaptureLost="ResizeGrip_PointerReleased"
+                            ToolTipService.ToolTip="Потягни для зміни розміру">
+                        <FontIcon x:Name="ResizeGripIcon" Glyph="&#xE73F;" FontSize="13"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Foreground="{StaticResource AccentBrush}" />
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="HistoryOverlay" Grid.RowSpan="6" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -166,7 +216,7 @@
                     </ScrollViewer>
                 </Grid>
 
-                <Grid x:Name="SettingsOverlay" Grid.RowSpan="8" Visibility="Collapsed">
+                <Grid x:Name="SettingsOverlay" Grid.RowSpan="6" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -193,9 +243,18 @@
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <StackPanel x:Name="SettingsCardsPanel" Spacing="10">
+                            <Border x:Name="SettingsProviderCard" CornerRadius="14" Padding="14" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock x:Name="SettingsProviderTitle" Text="Провайдер агента" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="SettingsProviderHint" FontSize="11" TextWrapping="Wrap" />
+                                    <ComboBox x:Name="SettingsProviderCombo" HorizontalAlignment="Stretch"
+                                              SelectionChanged="SettingsProvider_SelectionChanged" />
+                                </StackPanel>
+                            </Border>
+
                             <Border x:Name="SettingsAuthCard" CornerRadius="14" Padding="14" BorderThickness="1">
                                 <StackPanel Spacing="8">
-                                    <TextBlock Text="Cursor Agent" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="SettingsAuthTitle" Text="Cursor Agent" FontSize="13" FontWeight="SemiBold" />
                                     <TextBlock x:Name="SettingsAuthStatus" FontSize="12" TextWrapping="Wrap" />
                                     <Button x:Name="SettingsLoginBtn" Style="{StaticResource ActionButtonStyle}"
                                             Content="Увійти в Cursor" Click="SettingsLogin_Click"
@@ -208,7 +267,7 @@
 
                             <Border x:Name="SettingsModeCard" CornerRadius="14" Padding="14" BorderThickness="1">
                                 <StackPanel Spacing="8">
-                                    <TextBlock Text="Режим агента" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="SettingsModeTitle" Text="Режим агента" FontSize="13" FontWeight="SemiBold" />
                                     <ComboBox x:Name="SettingsModeCombo" HorizontalAlignment="Stretch"
                                               SelectionChanged="SettingsMode_SelectionChanged">
                                         <ComboBoxItem Content="Agent" Tag="agent" />
@@ -220,8 +279,8 @@
 
                             <Border x:Name="SettingsModelCard" CornerRadius="14" Padding="14" BorderThickness="1">
                                 <StackPanel Spacing="8">
-                                    <TextBlock Text="Модель" FontSize="13" FontWeight="SemiBold" />
-                                    <TextBlock Text="Для спілкування через Cursor Agent CLI" FontSize="11" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="SettingsModelTitle" Text="Модель" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="SettingsModelHint" Text="Для спілкування через Cursor Agent CLI" FontSize="11" TextWrapping="Wrap" />
                                     <ComboBox x:Name="SettingsModelCombo" HorizontalAlignment="Stretch"
                                               SelectionChanged="SettingsModel_SelectionChanged" />
                                 </StackPanel>
@@ -229,7 +288,7 @@
 
                             <Border x:Name="SettingsWorkspaceCard" CornerRadius="14" Padding="14" BorderThickness="1">
                                 <StackPanel Spacing="8">
-                                    <TextBlock Text="Робоча папка" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="SettingsWorkspaceTitle" Text="Робоча папка" FontSize="13" FontWeight="SemiBold" />
                                     <TextBlock x:Name="SettingsWorkspaceText" FontSize="11" TextTrimming="CharacterEllipsis" />
                                     <ComboBox x:Name="SettingsRecentWorkspaceCombo" HorizontalAlignment="Stretch"
                                               SelectionChanged="SettingsRecentWorkspace_SelectionChanged" />
@@ -239,11 +298,39 @@
                                 </StackPanel>
                             </Border>
 
+                            <Border x:Name="SettingsLanguageCard" CornerRadius="14" Padding="14" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock x:Name="SettingsLanguageTitle" Text="Мова" FontSize="13" FontWeight="SemiBold" />
+                                    <ComboBox x:Name="SettingsLanguageCombo" HorizontalAlignment="Stretch"
+                                              SelectionChanged="SettingsLanguage_SelectionChanged">
+                                        <ComboBoxItem Content="Українська" Tag="uk" />
+                                        <ComboBoxItem Content="English" Tag="en" />
+                                    </ComboBox>
+                                </StackPanel>
+                            </Border>
+
                             <Border x:Name="SettingsThemesCard" CornerRadius="14" Padding="14" BorderThickness="1">
                                 <StackPanel Spacing="8">
-                                    <TextBlock Text="Теми" FontSize="13" FontWeight="SemiBold" />
-                                    <TextBlock Text="Маскот і кольори панелі" FontSize="11" />
+                                    <TextBlock x:Name="SettingsThemesTitle" Text="Теми" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="SettingsThemesHint" Text="Маскот і кольори панелі" FontSize="11" />
                                     <StackPanel x:Name="ThemesPanel" Spacing="6" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="SettingsUpdateCard" CornerRadius="14" Padding="14" BorderThickness="1">
+                                <StackPanel Spacing="8">
+                                    <TextBlock x:Name="SettingsUpdateTitle" Text="Оновлення" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="SettingsVersionText" FontSize="11" />
+                                    <TextBlock x:Name="SettingsUpdateStatus" FontSize="12" TextWrapping="Wrap" />
+                                    <ProgressBar x:Name="SettingsUpdateProgress" Minimum="0" Maximum="1"
+                                                 Visibility="Collapsed" Height="6" />
+                                    <Button x:Name="SettingsCheckUpdateBtn" Style="{StaticResource ActionButtonStyle}"
+                                            Content="Перевірити оновлення" Click="SettingsCheckUpdate_Click"
+                                            CornerRadius="10" Padding="12,8" HorizontalAlignment="Stretch" />
+                                    <Button x:Name="SettingsInstallUpdateBtn" Style="{StaticResource ActionButtonStyle}"
+                                            Content="Оновити зараз" Click="SettingsInstallUpdate_Click"
+                                            CornerRadius="10" Padding="12,8" HorizontalAlignment="Stretch"
+                                            Visibility="Collapsed" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -252,7 +339,9 @@
             </Grid>
             </Border>
         </Border>
-        <Image x:Name="FrameDecorImage" Width="380" Height="600"
-               Stretch="Fill" IsHitTestVisible="False" Visibility="Collapsed" />
+        <Image x:Name="FrameDecorImage"
+               Stretch="Fill" IsHitTestVisible="False" Visibility="Collapsed"
+               HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+        </Grid>
     </Grid>
 </Window>

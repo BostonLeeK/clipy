@@ -2,13 +2,18 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
-namespace Clipy.Themes;
+namespace IconGen;
 
-public sealed class DefaultMascotRenderer : IMascotRenderer
+internal interface IMascotRenderer
+{
+    Bitmap Render(int size, double phase);
+}
+
+internal sealed class NeonMascotRenderer : IMascotRenderer
 {
     public Bitmap Render(int size, double phase)
     {
-        var bmp = new Bitmap(size, size, PixelFormat.Format32bppPArgb);
+        var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.CompositingMode = CompositingMode.SourceCopy;

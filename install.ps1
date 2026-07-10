@@ -7,6 +7,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $proj = Join-Path $root "Clipy\Clipy.csproj"
 
 Write-Host "Building Clipy (WinUI)..."
+& (Join-Path $root "generate-icons.ps1")
 dotnet publish $proj -c Release -r win-x64 --self-contained true -o (Join-Path $root "publish")
 
 $exe = Join-Path $root "publish\Clipy.exe"

@@ -1,0 +1,29 @@
+{
+  "id": "kawaii",
+  "name": "Totoro Forest",
+  "author": "boston",
+  "version": "1.0.0",
+  "description": {
+    "uk": "Лісовий маскот у стилі Тоторо",
+    "en": "Totoro-style forest mascot"
+  },
+  "mascot": "kawaii",
+  "frame": "totoro",
+  "emptyIcon": "🌿",
+  "onAccent": "#121810",
+  "home": {
+    "background": "assets/home-bg.gif",
+    "opacity": 0.38
+  },
+  "colors": {
+    "accent": "#8FC06E",
+    "background": "#141814",
+    "card": "#222822",
+    "border": "#3A4638",
+    "text": "#EEF2E8",
+    "muted": "#A0B098",
+    "frameStart": "#CC8FC06E",
+    "frameMid": "#55C8B888",
+    "frameEnd": "#AA7A9AC8"
+  }
+}

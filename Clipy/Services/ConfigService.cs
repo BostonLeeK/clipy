@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Clipy.Helpers;
 using Clipy.Models;
+using Clipy.Services.Agents;
 using Windows.Graphics;
 
 namespace Clipy.Services;
@@ -41,8 +42,12 @@ public sealed class ConfigService
 
     private static AppConfig Normalize(AppConfig config)
     {
-        var w = config.Expanded ? WindowHelper.PanelWidth : WindowHelper.OrbSize;
-        var h = config.Expanded ? WindowHelper.PanelHeight : WindowHelper.OrbSize;
+        var w = config.Expanded
+            ? WindowHelper.ClampPanelWidth(config.PanelWidth ?? WindowHelper.DefaultPanelWidth)
+            : WindowHelper.OrbSize;
+        var h = config.Expanded
+            ? WindowHelper.ClampPanelHeight(config.PanelHeight ?? WindowHelper.DefaultPanelHeight)
+            : WindowHelper.OrbSize;
 
         if (config.WindowX is not int x || config.WindowY is not int y
             || !WindowHelper.IsOnScreen(new PointInt32(x, y), w, h))
@@ -57,12 +62,23 @@ public sealed class ConfigService
         if (string.IsNullOrWhiteSpace(config.Workspace) || !Directory.Exists(config.Workspace))
             config.Workspace = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
+        if (string.IsNullOrWhiteSpace(config.AgentProvider))
+            config.AgentProvider = "cursor";
+        else
+            config.AgentProvider = AgentProviderRegistry.NormalizeId(config.AgentProvider);
+
         if (string.IsNullOrWhiteSpace(config.AgentPath) || !File.Exists(config.AgentPath))
         {
             config.AgentPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "cursor-agent", "agent.cmd");
         }
+
+        if (string.IsNullOrWhiteSpace(config.CodexPath))
+            config.CodexPath = "codex";
+
+        if (string.IsNullOrWhiteSpace(config.ClaudePath))
+            config.ClaudePath = "claude";
 
         if (string.IsNullOrWhiteSpace(config.ThemeId))
             config.ThemeId = "default";
@@ -79,6 +95,9 @@ public sealed class ConfigService
                 "plan" => "plan",
                 _ => "agent",
             };
+
+        config.PanelWidth = WindowHelper.ClampPanelWidth(config.PanelWidth ?? WindowHelper.DefaultPanelWidth);
+        config.PanelHeight = WindowHelper.ClampPanelHeight(config.PanelHeight ?? WindowHelper.DefaultPanelHeight);
 
         config.RecentWorkspaces = config.RecentWorkspaces
             .Where(p => !string.IsNullOrWhiteSpace(p) && Directory.Exists(p))
